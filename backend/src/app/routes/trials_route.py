@@ -81,6 +81,42 @@ async def search_trials(
         "data": trials
     }
 
+@router.get("/search-live")
+async def search_trials_live(
+    condition: str = None,
+    location: str = None,
+    limit: int = 20,
+):
+    """
+    Fetch trials directly from ClinicalTrials.gov in real-time.
+    Results are NOT stored in DB — use /sync to persist them.
+
+    Args:
+        condition: Medical condition e.g. "diabetes", "hypertension"
+        location: City or country e.g. "Mumbai", "India", "United States"
+        limit: Max results (default 20, max 100)
+    """
+    fetcher = ClinicalTrialsFetcher()
+    trials = fetcher.fetch_by_condition_and_location(
+        condition=condition,
+        location=location,
+        limit=min(limit, 100),
+    )
+    for t in trials:
+        for key in ("start_date", "completion_date"):
+            val = t.get(key)
+            if val and hasattr(val, "isoformat"):
+                t[key] = val.isoformat()
+        t.pop("embedding", None)
+
+    return {
+        "success": True,
+        "count": len(trials),
+        "source": "ClinicalTrials.gov (live)",
+        "data": trials,
+    }
+
+
 @router.post("/sync")
 async def sync_trials(extract_criteria: bool = True):
     """

@@ -202,9 +202,41 @@ class ClinicalTrialsFetcher:
                 "Philadelphia": [-75.17, 39.95],
                 "San Antonio": [-98.49, 29.42],
                 "San Diego": [-117.16, 32.71],
+                # India
+                "Mumbai": [72.8777, 19.0760],
+                "Delhi": [77.2090, 28.6139],
+                "New Delhi": [77.2090, 28.6139],
+                "Bangalore": [77.5946, 12.9716],
+                "Bengaluru": [77.5946, 12.9716],
+                "Hyderabad": [78.4867, 17.3850],
+                "Chennai": [80.2707, 13.0827],
+                "Kolkata": [88.3639, 22.5726],
+                "Pune": [73.8567, 18.5204],
+                "Ahmedabad": [72.5714, 23.0225],
+                "Jaipur": [75.7873, 26.9124],
+                "Surat": [72.8311, 21.1702],
+                "Lucknow": [80.9462, 26.8467],
+                "Nagpur": [79.0882, 21.1458],
+                "Indore": [75.8577, 22.7196],
+                "Bhopal": [77.4126, 23.2599],
+                "Kochi": [76.2673, 9.9312],
+                "Chandigarh": [76.7794, 30.7333],
+                "Coimbatore": [76.9558, 11.0168],
+                "Visakhapatnam": [83.2185, 17.6868],
+                # UK
+                "London": [-0.1276, 51.5074],
+                "Manchester": [-2.2426, 53.4808],
+                # Europe
+                "Paris": [2.3522, 48.8566],
+                "Berlin": [13.4050, 52.5200],
+                # Asia-Pacific
+                "Tokyo": [139.6917, 35.6895],
+                "Sydney": [151.2093, -33.8688],
+                "Singapore": [103.8198, 1.3521],
+                "Toronto": [-79.3832, 43.6532],
             }
 
-            coords = city_coords.get(city, [-98.58, 39.83])  # Default to center of USA
+            coords = city_coords.get(city, city_coords.get(city.title(), [0.0, 0.0]))
 
             location_dict = {
                 "facility": facility,
@@ -305,6 +337,43 @@ class ClinicalTrialsFetcher:
                 continue
 
         return trials
+
+    def fetch_by_condition_and_location(
+        self,
+        condition: Optional[str] = None,
+        location: Optional[str] = None,
+        status: str = "RECRUITING",
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch trials live from ClinicalTrials.gov using query parameters.
+        Uses the v2 API with query.cond (condition) and query.locn (location).
+
+        Args:
+            condition: Medical condition e.g. "diabetes"
+            location: City or country e.g. "Mumbai" or "India"
+            status: Recruitment status filter
+            limit: Max results to return
+
+        Returns:
+            List of parsed trial dicts
+        """
+        params: Dict[str, Any] = {"pageSize": min(limit, 100)}
+        if condition:
+            params["query.cond"] = condition
+        if location:
+            params["query.locn"] = location
+        if status:
+            params["filter.overallStatus"] = status
+
+        try:
+            response = self.session.get(self.api_url, params=params, timeout=30)
+            response.raise_for_status()
+            raw = response.json()
+            return self.parse_trials({"studies": raw.get("studies", [])})
+        except Exception as e:
+            print(f"Live fetch error: {e}")
+            return []
 
     def save_to_json(self, data: List[Dict[str, Any]], filename: str = "trials.json"):
         """Save trials to JSON file"""

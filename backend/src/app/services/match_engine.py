@@ -46,13 +46,27 @@ class MatchingEngine:
         Returns:
             List of match result dictionaries
         """
-        coords = patient["demographics"]["location"]["coordinates"]
-        age = patient["demographics"]["age"]
+        demographics = patient.get("demographics", {}) or {}
+        age = demographics.get("age") if isinstance(demographics, dict) else None
+        location = demographics.get("location") if isinstance(demographics, dict) else None
+
+        # Location may be GeoJSON {"coordinates": [lon, lat]} or plain string city name
+        if isinstance(location, dict) and "coordinates" in location:
+            coords = location["coordinates"]
+        elif isinstance(location, list) and len(location) == 2:
+            coords = location
+        else:
+            coords = None  # string like "Mumbai" — skip geo query
 
         # ===== TIER 1: GEO + HARD FILTERS (Broad) =====
         if verbose:
             logger.info(f"Tier 1: Geospatial + Hard Filters")
-        candidates = self.geo.find_nearby_trials(coords, age)
+        city_name = location if isinstance(location, str) else None
+
+        if coords is not None and age is not None:
+            candidates = self.geo.find_nearby_trials(coords, age)
+        else:
+            candidates = self.geo.find_all_recruiting_trials(age, city_name=city_name)
         tier1_count = len(candidates)
         if verbose:
             logger.info(f"  Tier 1 result: {tier1_count} candidates")
@@ -113,10 +127,13 @@ class MatchingEngine:
                 analysis = self.llm.analyze_eligibility(patient, trial)
 
                 # Calculate distance for the specific site
-                dist = self.geo.calculate_distance(
-                    coords,
-                    trial["locations"][0] if trial.get("locations") else {"geo": {"coordinates": coords}}
-                )
+                if coords is not None:
+                    dist = self.geo.calculate_distance(
+                        coords,
+                        trial["locations"][0] if trial.get("locations") else {"geo": {"coordinates": coords}}
+                    )
+                else:
+                    dist = None
 
                 match_result = {
                     "patient_id": str(patient["_id"]),
