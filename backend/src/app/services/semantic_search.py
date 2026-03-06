@@ -13,30 +13,39 @@ logger = logging.getLogger(__name__)
 
 
 class SemanticSearchService:
-    """
-    Semantic search using sentence-transformers
-    Finds clinically relevant trials based on semantic similarity
-    """
-
-    def __init__(self, model_name: str = "sentence-transformers/biomedical-mpnet-base"):
+    def __init__(self, model_name: str = "pritamdeka/S-PubMedBert-MS-MARCO"):
         """
         Initialize semantic search with biomedical model
-
-        Args:
-            model_name: Sentence transformer model to use
-                Default: biomedical-mpnet-base (optimized for medical/clinical text)
+        Models prioritized for clinical/biomedical text:
+        1. pritamdeka/S-PubMedBert-MS-MARCO (Best for clinical trials)
+        2. dmis-lab/biobert-base-cased-v1.1 (Alternative biomedical)
+        3. sentence-transformers/all-MiniLM-L6-v2 (General fallback)
         """
-        try:
-            self.model = SentenceTransformer(model_name)
-            self.model_name = model_name
-            logger.info(f"Semantic Search initialized with {model_name}")
-        except Exception as e:
-            logger.error(f"Error loading model {model_name}: {e}")
-            # Fallback to general model
-            self.model = SentenceTransformer("all-MiniLM-L6-v2")
-            self.model_name = "all-MiniLM-L6-v2"
-            logger.warning("Fallback to general-purpose model")
+        self.model = None
+        self.model_name = None
 
+        # List of biomedical models to try in order
+        models_to_try = [
+            model_name,  # Primary choice
+            "dmis-lab/biobert-base-cased-v1.1",  # Alternative biomedical
+            "all-MiniLM-L6-v2",  # General fallback
+        ]
+
+        for model_choice in models_to_try:
+            try:
+                logger.info(f"Attempting to load model: {model_choice}")
+                self.model = SentenceTransformer(model_choice)
+                self.model_name = model_choice
+                logger.info(f"[OK] Semantic Search initialized with {model_choice}")
+                break
+            except Exception as e:
+                logger.warning(f"Failed to load {model_choice}: {e}")
+                continue
+
+        if self.model is None:
+            logger.error("Failed to load any semantic model!")
+            raise RuntimeError("Could not initialize semantic search with any available model")
+            
     def generate_patient_embedding(self, patient: Dict[str, Any]) -> np.ndarray:
         """
         Generate semantic embedding for patient profile

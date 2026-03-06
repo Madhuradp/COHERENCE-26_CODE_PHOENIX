@@ -16,13 +16,16 @@ async def run_match_pipeline(patient_id: str):
         return {"error": "Patient not found"}
 
     # 2. Run the 3-Tier Matcher (DB -> Semantic -> LLM)
-    results = engine.run_full_pipeline(patient)
-    
+    results = engine.run_full_pipeline(patient, limit=20)
+
     # 3. Store top results for the doctor to see later
     if results:
         db.matches.insert_many(results)
-        
-    return {"patient": patient["display_id"], "matches": results}
+
+    # Get display ID (handle cases where it might not exist)
+    display_id = patient.get("display_id") or f"PAT-{str(patient['_id'])[-4:].upper()}"
+
+    return {"success": True, "patient": display_id, "matches": results}
 
 @router.get("/results/{patient_id}")
 async def get_results(patient_id: str):

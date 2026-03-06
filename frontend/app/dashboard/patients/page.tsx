@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Table, Badge } from "@/components/ui/Table";
 import { DatasetUploader } from "@/components/upload/DatasetUploader";
 import { listPatients, uploadPatient, type Patient } from "@/lib/api";
+import { transformPatientBatch } from "@/lib/transformPatientData";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -24,6 +25,8 @@ export default function PatientsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     listPatients()
@@ -42,21 +45,50 @@ export default function PatientsPage() {
   const handleUpload = async (_file: File, preview: string[][]) => {
     if (preview.length < 2) return;
     const headers = preview[0];
-    const rows = preview.slice(1);
-    setUploadStatus("Uploading...");
-    let count = 0;
-    for (const row of rows) {
-      if (row.length < 2) continue;
-      const data: Record<string, unknown> = {};
-      headers.forEach((h, i) => { data[h] = row[i] || ""; });
-      try {
-        await uploadPatient(data);
-        count++;
-      } catch {}
+    const rows = preview.slice(1).filter((row) => row.length >= 2);
+
+    if (rows.length === 0) {
+      setUploadStatus("No valid rows to upload");
+      return;
     }
-    setUploadStatus(`Uploaded ${count} patient records successfully`);
+
+    setIsUploading(true);
+    setUploadProgress(0);
+    setUploadStatus(`Uploading 0/${rows.length} records...`);
+
+    // Transform all rows to proper nested structure
+    const transformedPatients = transformPatientBatch(headers, rows);
+
+    let successCount = 0;
+    let failureCount = 0;
+
+    // Upload each patient with progress tracking
+    for (let idx = 0; idx < transformedPatients.length; idx++) {
+      try {
+        await uploadPatient(transformedPatients[idx]);
+        successCount++;
+      } catch (err) {
+        failureCount++;
+        console.error(`Failed to upload patient ${idx + 1}:`, err);
+      }
+
+      // Update progress
+      const progress = Math.round(((idx + 1) / rows.length) * 100);
+      setUploadProgress(progress);
+      setUploadStatus(
+        `Uploading ${idx + 1}/${rows.length} records... (${progress}%)`
+      );
+    }
+
+    setIsUploading(false);
+    setUploadStatus(
+      `Upload complete: ${successCount} succeeded, ${failureCount} failed`
+    );
+
     // Refresh patient list
-    listPatients().then((res) => setPatients(res.data));
+    setTimeout(() => {
+      listPatients().then((res) => setPatients(res.data));
+    }, 500);
   };
 
   const columns = [
@@ -140,7 +172,23 @@ export default function PatientsPage() {
       <motion.div variants={itemVariants}>
         <Card>
           <DatasetUploader onUpload={handleUpload} />
-          {uploadStatus && (
+          {isUploading && (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-text-muted">Uploading patients...</span>
+                <span className="text-sm font-semibold text-brand-purple">{uploadProgress}%</span>
+              </div>
+              <div className="w-full bg-surface-muted rounded-full h-2 overflow-hidden">
+                <motion.div
+                  className="bg-brand-purple h-full rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${uploadProgress}%` }}
+                  transition={{ duration: 0.3 }}
+                />
+              </div>
+            </div>
+          )}
+          {uploadStatus && !isUploading && (
             <div className="mt-3 flex items-center gap-2 text-sm text-green-600">
               <CheckCircle2 size={15} /> {uploadStatus}
             </div>
