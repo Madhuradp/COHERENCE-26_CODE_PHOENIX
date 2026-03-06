@@ -1,0 +1,3572 @@
+# === src\app\__init__.py ===
+
+
+# === src\app\auth.py ===
+import jwt
+from datetime import datetime, timedelta
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from passlib.context import CryptContext
+from pydantic import BaseModel
+from .config import Config
+from .core.database import Database
+
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=60) # 1 hour token
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, Config.JWT_SECRET, algorithm="HS256")
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, Config.JWT_SECRET, algorithms=["HS256"])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+    
+    db = Database()
+    user = db.db.users.find_one({"email": email})
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    
+    return user
+
+# === src\app\config.py ===
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+class Config:
+    """Application configuration"""
+
+    MONGODB_URL = os.getenv("MONGODB_URL")
+    DATABASE_NAME = os.getenv("DATABASE_NAME", "trial_match")
+
+    PORT = int(os.getenv("PORT", 5000))
+
+    JWT_SECRET = os.getenv("JWT_SECRET", "your_jwt_secret_key")
+
+    DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
+    @classmethod
+    def validate(cls):
+        """Validate required configuration"""
+        if not cls.MONGODB_URL:
+            raise ValueError("MONGODB_URL environment variable is not set")
+        return True
+
+
+try:
+    Config.validate()
+except ValueError as e:
+    print(f"Configuration Error: {e}")
+
+
+# === src\app\core\__init__.py ===
+
+
+# === src\app\core\database.py ===
+from pymongo import MongoClient
+from ..config import Config
+from ..services.pii_redaction import PIIRedactionService
+
+class Database:
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(Database, cls).__new__(cls)
+            cls._instance.client = MongoClient(Config.MONGODB_URL)
+            cls._instance.db = cls._instance.client[Config.DATABASE_NAME]
+            
+            cls._instance.trials = cls._instance.db["clinical_trials"]
+            cls._instance.patients = cls._instance.db["patients"]
+            cls._instance.matches = cls._instance.db["match_results"]
+            cls._instance.users = cls._instance.db["users"]
+            cls._instance.audit = cls._instance.db["audit_logs"]
+            
+            cls._instance.pii = PIIRedactionService()
+            
+            print(f"✓ Database Initialized: {Config.DATABASE_NAME}")
+        return cls._instance
+
+def get_db():
+    return Database()
+
+# === src\app\models\__init__.py ===
+
+
+# === src\app\models\audit_logs.py ===
+"""Audit log models"""
+
+from pydantic import Field
+from typing import Optional, Dict, Any
+from datetime import datetime
+from .base import BaseDocument, EventType, utc_now
+
+
+class AuditLog(BaseDocument):
+    """Audit log document"""
+    timestamp: datetime = Field(default_factory=utc_now, description="Event timestamp")
+    event_type: EventType = Field(..., description="Event type")
+    patient_id: Optional[str] = Field(None, description="Patient ObjectId as string (if applicable)")
+    user_id: Optional[str] = Field(None, description="User ObjectId as string (if applicable)")
+    details: Dict[str, Any] = Field(default_factory=dict, description="Event details")
+    action_by: str = Field(default="System", description="Who performed the action")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "timestamp": "2024-11-20T10:30:45",
+                "event_type": "MATCH_GENERATED",
+                "patient_id": "507f1f77bcf86cd799439011",
+                "user_id": "507f1f77bcf86cd799439012",
+                "details": {
+                    "nct_id": "NCT04582292",
+                    "bias_check_passed": True,
+                    "confidence_score": 0.84
+                },
+                "action_by": "System"
+            }
+        }
+
+
+# === src\app\models\base.py ===
+from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime, timezone
+from typing import Optional, Any
+from enum import Enum
+
+def utc_now():
+    """Get current UTC time as timezone-aware datetime"""
+    return datetime.now(timezone.utc)
+
+
+class BaseDocument(BaseModel):
+    """Base class for all MongoDB documents"""
+
+    model_config = ConfigDict(
+        json_encoders={
+            datetime: lambda v: v.isoformat() if v else None
+        },
+        populate_by_name=True,
+        from_attributes=True
+    )
+
+    created_at: datetime = Field(default_factory=utc_now, description="Document creation timestamp")
+    updated_at: datetime = Field(default_factory=utc_now, description="Last update timestamp")
+
+    def dict(self, **kwargs) -> dict:
+        """Convert model to dictionary"""
+        return super().model_dump(**kwargs)
+
+    def json(self, **kwargs) -> str:
+        """Convert model to JSON string"""
+        return super().model_dump_json(**kwargs)
+
+    def update_timestamp(self):
+        """Update the updated_at timestamp"""
+        self.updated_at = utc_now()
+        return self
+
+
+class TimestampMixin:
+    """Mixin to add timestamp functionality"""
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class GeoPoint(BaseModel):
+    """GeoJSON Point for coordinate storage"""
+    type: str = Field(default="Point", description="GeoJSON type")
+    coordinates: list[float] = Field(..., description="[longitude, latitude]")
+
+    def __init__(self, longitude: float = None, latitude: float = None, **data):
+        if longitude is not None and latitude is not None:
+            data['coordinates'] = [longitude, latitude]
+        super().__init__(**data)
+
+
+class Address(BaseModel):
+    """Standard address format"""
+    street: Optional[str] = Field(None, description="Street address")
+    city: str = Field(..., description="City")
+    state: Optional[str] = Field(None, description="State/Province")
+    country: str = Field(..., description="Country")
+    postal_code: Optional[str] = Field(None, description="Postal code")
+    geo: Optional[GeoPoint] = Field(None, description="Geographic coordinates")
+
+
+class StatusEnum(str, Enum):
+    """Common status values"""
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    PENDING = "PENDING"
+    ARCHIVED = "ARCHIVED"
+    DELETED = "DELETED"
+
+
+class ResponseModel(BaseModel):
+    """Standard API response wrapper"""
+    success: bool = Field(..., description="Operation success status")
+    data: Any = Field(None, description="Response data")
+    error: Optional[str] = Field(None, description="Error message if any")
+    message: Optional[str] = Field(None, description="Status message")
+    timestamp: datetime = Field(default_factory=utc_now, description="Response timestamp")
+
+
+class PaginatedResponse(BaseModel):
+    """Paginated API response"""
+    success: bool = True
+    total: int = Field(..., description="Total number of items")
+    count: int = Field(..., description="Number of items in this response")
+    page: int = Field(..., ge=1, description="Current page number")
+    per_page: int = Field(..., ge=1, description="Items per page")
+    total_pages: int = Field(..., description="Total number of pages")
+    data: list[Any] = Field(default=[], description="Items in current page")
+    message: Optional[str] = None
+
+
+class MatchStatus(str, Enum):
+    """Trial matching status values"""
+    ELIGIBLE = "ELIGIBLE"
+    INELIGIBLE = "INELIGIBLE"
+    REVIEW_NEEDED = "REVIEW_NEEDED"
+
+
+class EventType(str, Enum):
+    """Audit event types"""
+    MATCH_GENERATED = "MATCH_GENERATED"
+    PII_REDACTED = "PII_REDACTED"
+    BIAS_CHECK = "BIAS_CHECK"
+    DATA_ACCESSED = "DATA_ACCESSED"
+    USER_LOGIN = "USER_LOGIN"
+    USER_LOGOUT = "USER_LOGOUT"
+    DATA_CREATED = "DATA_CREATED"
+    DATA_UPDATED = "DATA_UPDATED"
+    DATA_DELETED = "DATA_DELETED"
+
+
+class TrialPhase(str, Enum):
+    """Clinical trial phases"""
+    PHASE_0 = "Phase 0"
+    PHASE_1 = "Phase 1"
+    PHASE_2 = "Phase 2"
+    PHASE_3 = "Phase 3"
+    PHASE_4 = "Phase 4"
+
+
+class RecruitmentStatus(str, Enum):
+    """Trial recruitment status"""
+    RECRUITING = "RECRUITING"
+    ACTIVE_NOT_RECRUITING = "ACTIVE_NOT_RECRUITING"
+    ENROLLING_BY_INVITATION = "ENROLLING_BY_INVITATION"
+    NOT_YET_RECRUITING = "NOT_YET_RECRUITING"
+    COMPLETED = "COMPLETED"
+    SUSPENDED = "SUSPENDED"
+    TERMINATED = "TERMINATED"
+    WITHDRAWN = "WITHDRAWN"
+
+
+class Gender(str, Enum):
+    """Gender values"""
+    MALE = "MALE"
+    FEMALE = "FEMALE"
+    ALL = "ALL"
+    OTHER = "OTHER"
+
+
+class MedicationStatus(str, Enum):
+    """Medication status"""
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    DISCONTINUED = "discontinued"
+    UNKNOWN = "unknown"
+
+
+# === src\app\models\clinical_trial.py ===
+
+from pydantic import Field
+from typing import List, Optional
+from datetime import datetime
+from .base import BaseDocument, GeoPoint, RecruitmentStatus
+
+
+class Eligibility(BaseDocument):
+    """Trial eligibility criteria"""
+    min_age: Optional[int] = Field(None, description="Minimum age in years")
+    max_age: Optional[int] = Field(None, description="Maximum age in years")
+    gender: str = Field(default="ALL", description="Gender requirement (ALL, MALE, FEMALE)")
+    raw_text: str = Field(..., description="Raw eligibility text from trial")
+
+
+class TrialLocation(BaseDocument):
+    """Trial location"""
+    facility: str = Field(..., description="Facility name")
+    city: str = Field(..., description="City")
+    state: Optional[str] = Field(None, description="State (US)")
+    country: str = Field(..., description="Country")
+    geo: GeoPoint = Field(..., description="Geographic location (GeoJSON Point)")
+
+
+class ClinicalTrial(BaseDocument):
+    """Clinical trial document"""
+    nct_id: str = Field(..., description="ClinicalTrials.gov NCT ID")
+    title: str = Field(..., description="Official trial title")
+    brief_title: str = Field(..., description="Brief title")
+    phase: Optional[str] = Field(None, description="Trial phase (Phase 1, 2, 3, 4)")
+    status: RecruitmentStatus = Field(..., description="Recruitment status")
+
+    eligibility: Eligibility = Field(..., description="Eligibility criteria")
+
+    locations: List[TrialLocation] = Field(default=[], description="Trial locations")
+
+    start_date: Optional[datetime] = Field(None, description="Trial start date")
+    completion_date: Optional[datetime] = Field(None, description="Expected completion date")
+
+    conditions: List[str] = Field(default=[], description="Medical conditions studied")
+    keywords: List[str] = Field(default=[], description="Trial keywords")
+    interventions: List[dict] = Field(default=[], description="Intervention details")
+    enrollment: Optional[int] = Field(None, description="Target enrollment")
+    sponsor: Optional[str] = Field(None, description="Sponsor organization")
+
+    embedding: List[float] = Field(default=[], description="Vector embedding of title+summary")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "nct_id": "NCT04582292",
+                "title": "HARMONY OUTCOMES Extension Study",
+                "brief_title": "HARMONY Trial Extension",
+                "phase": "Phase 3",
+                "status": "RECRUITING",
+                "eligibility": {
+                    "min_age": 18,
+                    "max_age": 75,
+                    "gender": "ALL",
+                    "raw_text": "Inclusion: HbA1c >= 7.5%... Exclusion: Pregnancy..."
+                },
+                "locations": [
+                    {
+                        "facility": "UCSF Medical Center",
+                        "city": "San Francisco",
+                        "state": "CA",
+                        "country": "United States",
+                        "geo": {
+                            "type": "Point",
+                            "coordinates": [-122.45, 37.76]
+                        }
+                    }
+                ],
+                "conditions": ["Type 2 Diabetes Mellitus"],
+                "keywords": ["diabetes", "glycemic control"],
+                "sponsor": "Eli Lilly and Company"
+            }
+        }
+
+
+# === src\app\models\eligibility.py ===
+"""Structured eligibility criteria models"""
+
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from enum import Enum
+
+
+class ConstraintOperator(str, Enum):
+    """Constraint operators for matching"""
+    EQ = "=="
+    NEQ = "!="
+    GT = ">"
+    GTE = ">="
+    LT = "<"
+    LTE = "<="
+    IN = "in"
+    NOT_IN = "not_in"
+    CONTAINS = "contains"
+    NOT_CONTAINS = "not_contains"
+
+
+class AgeConstraint(BaseModel):
+    """Age constraint"""
+    min_age: Optional[int] = Field(None, description="Minimum age in years")
+    max_age: Optional[int] = Field(None, description="Maximum age in years")
+
+
+class LabValueConstraint(BaseModel):
+    """Lab value constraint (e.g., HbA1c > 7.0)"""
+    test_name: str = Field(..., description="Lab test name (e.g., HbA1c, eGFR, ALT)")
+    operator: ConstraintOperator = Field(..., description="Comparison operator")
+    value: float = Field(..., description="Threshold value")
+    unit: Optional[str] = Field(None, description="Unit of measurement (e.g., %, mg/dL)")
+
+
+class ConditionConstraint(BaseModel):
+    """Medical condition requirement"""
+    condition: str = Field(..., description="Condition name (e.g., Type 2 Diabetes)")
+    requirement: str = Field(
+        default="required",
+        description="'required' or 'excluded'"
+    )
+
+
+class MedicationConstraint(BaseModel):
+    """Medication requirement or exclusion"""
+    medication: str = Field(..., description="Medication name")
+    requirement: str = Field(
+        default="excluded",
+        description="'required', 'excluded', or 'prior_therapy_allowed'"
+    )
+
+
+class PerformanceStatusConstraint(BaseModel):
+    """Performance status constraint (ECOG scale 0-4)"""
+    max_ecog: Optional[int] = Field(None, description="Maximum ECOG score (0-4)")
+
+
+class PregnancyConstraint(BaseModel):
+    """Pregnancy status requirement"""
+    excluded: bool = Field(default=True, description="Pregnant/nursing patients excluded")
+
+
+class StructuredEligibility(BaseModel):
+    """Structured, queryable eligibility criteria"""
+
+    age: Optional[AgeConstraint] = Field(None, description="Age constraints")
+    gender: Optional[str] = Field(None, description="Gender requirement (ALL, MALE, FEMALE, OTHER)")
+
+    conditions: List[ConditionConstraint] = Field(default=[], description="Condition requirements")
+    medications: List[MedicationConstraint] = Field(default=[], description="Medication constraints")
+    lab_values: List[LabValueConstraint] = Field(default=[], description="Lab value constraints")
+
+    performance_status: Optional[PerformanceStatusConstraint] = Field(None, description="Performance status")
+    pregnancy: Optional[PregnancyConstraint] = Field(None, description="Pregnancy constraints")
+
+    organ_function_constraints: List[Dict[str, Any]] = Field(
+        default=[],
+        description="Organ function constraints (e.g., renal, hepatic)"
+    )
+
+    extraction_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score of extraction (0.0-1.0)"
+    )
+
+    extraction_timestamp: Optional[str] = Field(None, description="When criteria was extracted/updated")
+
+    raw_text: str = Field(..., description="Original raw eligibility text for reference")
+
+
+class ExtractedCriteria(BaseModel):
+    """Result of criteria extraction"""
+    success: bool = Field(..., description="Whether extraction was successful")
+    structured_eligibility: Optional[StructuredEligibility] = Field(
+        None,
+        description="Extracted structured criteria"
+    )
+    extraction_notes: str = Field(
+        default="",
+        description="Notes or warnings from extraction"
+    )
+    error_message: Optional[str] = Field(None, description="Error if extraction failed")
+
+
+# === src\app\models\match_results.py ===
+from pydantic import Field
+from typing import List
+from datetime import datetime
+from .base import BaseDocument, MatchStatus, utc_now
+
+
+class MatchAnalysis(BaseDocument):
+    """Match analysis and explanation"""
+    summary: str = Field(..., description="Summary of match analysis")
+    criteria_met: List[str] = Field(default=[], description="Criteria patient meets")
+    criteria_failed: List[str] = Field(default=[], description="Criteria patient fails")
+    warnings: List[str] = Field(default=[], description="Warnings or additional notes")
+
+
+class MatchResult(BaseDocument):
+    """Match result document"""
+    patient_id: str = Field(..., description="Patient ObjectId as string")
+    nct_id: str = Field(..., description="Trial NCT ID")
+    run_date: datetime = Field(default_factory=utc_now, description="Date match was generated")
+
+    status: MatchStatus = Field(..., description="Match status (ELIGIBLE, INELIGIBLE, REVIEW_NEEDED)")
+    confidence_score: float = Field(..., ge=0, le=1, description="Confidence score (0-1)")
+
+    analysis: MatchAnalysis = Field(..., description="Detailed match analysis")
+
+    distance_km: float = Field(..., description="Distance from patient to trial site in km")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "patient_id": "507f1f77bcf86cd799439011",
+                "nct_id": "NCT04582292",
+                "run_date": "2024-11-20T10:30:00",
+                "status": "ELIGIBLE",
+                "confidence_score": 0.84,
+                "analysis": {
+                    "summary": "Strong match. Patient meets HbA1c requirements.",
+                    "criteria_met": ["Age (54 within 18-75)", "Condition (Diabetes)"],
+                    "criteria_failed": [],
+                    "warnings": ["Requires confirmation of Metformin dosage consistency."]
+                },
+                "distance_km": 12.4
+            }
+        }
+
+
+# === src\app\models\patients.py ===
+"""Patient data models"""
+
+from pydantic import Field
+from typing import List, Optional
+from datetime import datetime
+from .base import BaseDocument, GeoPoint, MedicationStatus, utc_now
+
+
+class Demographics(BaseDocument):
+    """Patient demographics"""
+    age: int = Field(..., ge=0, le=150, description="Age in years")
+    gender: str = Field(..., description="Gender (male, female, other)")
+    location: GeoPoint = Field(..., description="Geographic location (GeoJSON Point)")
+
+
+class Condition(BaseDocument):
+    """Medical condition"""
+    name: str = Field(..., description="Condition name")
+    icd10: str = Field(..., description="ICD-10 code")
+    onset: datetime = Field(..., description="Onset date")
+
+
+class Medication(BaseDocument):
+    """Current medication"""
+    name: str = Field(..., description="Medication name")
+    dosage: str = Field(..., description="Dosage (e.g., 500mg)")
+    status: MedicationStatus = Field(default=MedicationStatus.ACTIVE, description="Medication status")
+
+
+class LabValue(BaseDocument):
+    """Lab test result"""
+    name: str = Field(..., description="Lab test name (e.g., HbA1c)")
+    value: float = Field(..., description="Test value")
+    unit: str = Field(..., description="Unit of measurement")
+    date: datetime = Field(..., description="Test date")
+
+
+class Patient(BaseDocument):
+    """Patient document"""
+    display_id: str = Field(..., description="Patient display ID (e.g., PT-0042)")
+    demographics: Demographics = Field(..., description="Demographic information")
+    conditions: List[Condition] = Field(default=[], description="Medical conditions")
+    medications: List[Medication] = Field(default=[], description="Current medications")
+    lab_values: List[LabValue] = Field(default=[], description="Lab test results")
+    clinical_notes_text: str = Field(default="", description="Unstructured clinical notes")
+    embedding: List[float] = Field(default=[], description="Vector embedding for semantic search")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "display_id": "PT-0042",
+                "demographics": {
+                    "age": 54,
+                    "gender": "female",
+                    "location": {
+                        "type": "Point",
+                        "coordinates": [-122.41, 37.77]
+                    }
+                },
+                "conditions": [
+                    {
+                        "name": "Type 2 Diabetes",
+                        "icd10": "E11.9",
+                        "onset": "2021-03-01T00:00:00"
+                    }
+                ],
+                "medications": [
+                    {
+                        "name": "Metformin",
+                        "dosage": "500mg",
+                        "status": "active"
+                    }
+                ],
+                "lab_values": [
+                    {
+                        "name": "HbA1c",
+                        "value": 8.2,
+                        "unit": "%",
+                        "date": "2024-11-15T00:00:00"
+                    }
+                ],
+                "clinical_notes_text": "Patient presents with poorly controlled T2DM...",
+                "embedding": [0.012, -0.034, 0.156]
+            }
+        }
+
+
+# === src\app\models\users.py ===
+
+from pydantic import Field, EmailStr, BaseModel
+from datetime import datetime
+from .base import BaseDocument
+
+
+class UserRole(str):
+    """User roles"""
+    CLINICIAN = "CLINICIAN"
+    RESEARCHER = "RESEARCHER"
+    ADMIN = "ADMIN"
+    AUDITOR = "AUDITOR"
+
+
+class User(BaseDocument):
+    """User document"""
+    email: EmailStr = Field(..., description="Email (used for login)")
+    password_hash: str = Field(..., description="Bcrypt password hash (NEVER store plain text)")
+    full_name: str = Field(..., description="Full name")
+    role: str = Field(..., description="User role (CLINICIAN, RESEARCHER, ADMIN, AUDITOR)")
+    organization: str = Field(..., description="Organization name")
+    is_active: bool = Field(default=True, description="Is user active")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "dr.stone@cityhospital.com",
+                "password_hash": "$2b$12$LQv3c1yq...",
+                "full_name": "Dr. Senku Stone",
+                "role": "CLINICIAN",
+                "organization": "City Hospital",
+                "is_active": True
+            }
+        }
+
+class UserCreate(BaseModel):
+    """User creation request (plain password)"""
+    email: EmailStr
+    password: str = Field(..., min_length=8, description="Password (8+ chars)")
+    full_name: str
+    role: UserRole
+    organization: str
+
+class UserResponse(BaseModel):
+    """User response (no password hash)"""
+    email: str
+    full_name: str
+    role: UserRole
+    organization: str
+    is_active: bool
+    created_at: datetime
+
+
+# === src\app\routes\__init__.py ===
+
+
+# === src\app\routes\analytics_route.py ===
+from fastapi import APIRouter
+from ..core.database import Database
+
+router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
+
+@router.get("/summary")
+async def get_system_summary():
+    db = Database()
+    
+    total_patients = db.patients.count_documents({})
+    total_trials = db.trials.count_documents({})
+    total_matches = db.matches.count_documents({})
+    
+    redaction_logs = list(db.audit.find({"event_type": "PII_REDACTED"}))
+    total_redacted = sum(log["details"]["total_entities_redacted"] for log in redaction_logs)
+    
+    eligible_matches = db.matches.count_documents({"status": "ELIGIBLE"})
+    
+    return {
+        "success": True,
+        "data": {
+            "counts": {
+                "patients": total_patients,
+                "trials": total_trials,
+                "matches": total_matches
+            },
+            "privacy": {
+                "entities_protected": total_redacted,
+                "audit_logs_count": len(redaction_logs)
+            },
+            "matching_health": {
+                "eligible_count": eligible_matches,
+                "review_needed": db.matches.count_documents({"status": "REVIEW_NEEDED"})
+            }
+        }
+    }
+
+# === src\app\routes\auth_route.py ===
+from fastapi import APIRouter, HTTPException, Depends, status
+from pydantic import BaseModel, EmailStr
+from datetime import datetime
+from bson import ObjectId
+
+from ..auth import (
+    pwd_context,
+    create_access_token,
+    get_current_user,
+    oauth2_scheme
+)
+from ..core.database import Database
+from ..models.users import User, UserCreate, UserResponse, UserRole
+
+router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+
+
+
+def require_role(required_role: str):
+    """Dependency to enforce specific role"""
+    async def check_role(current_user: dict = Depends(get_current_user)):
+        if current_user.get("role") != required_role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role '{required_role}' required. You have '{current_user.get('role')}'"
+            )
+        return current_user
+    return check_role
+
+
+def require_any_role(*allowed_roles: str):
+    """Dependency to enforce any of multiple roles"""
+    async def check_any_role(current_user: dict = Depends(get_current_user)):
+        if current_user.get("role") not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"One of roles {allowed_roles} required. You have '{current_user.get('role')}'"
+            )
+        return current_user
+    return check_any_role
+
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserResponse
+
+
+@router.post("/register", response_model=UserResponse)
+async def register_user(user_data: UserCreate):
+    """
+    Register a new user.
+    Only ADMIN can create users with roles other than CLINICIAN.
+    """
+    db = Database()
+
+    existing_user = db.users.find_one({"email": user_data.email})
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User with this email already exists"
+        )
+
+    hashed_password = pwd_context.hash(user_data.password)
+
+    user_doc = {
+        "email": user_data.email,
+        "password_hash": hashed_password,
+        "full_name": user_data.full_name,
+        "role": user_data.role,
+        "organization": user_data.organization,
+        "is_active": True,
+        "created_at": datetime.utcnow()
+    }
+
+    result = db.users.insert_one(user_doc)
+    user_doc["_id"] = str(result.inserted_id)
+
+    return UserResponse(**user_doc)
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(credentials: LoginRequest):
+    """
+    Login with email and password.
+    Returns JWT access token.
+    """
+    db = Database()
+
+    user = db.users.find_one({"email": credentials.email})
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
+        )
+
+    if not pwd_context.verify(credentials.password, user["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
+        )
+
+    if not user.get("is_active", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive"
+        )
+
+    access_token = create_access_token({"sub": user["email"], "role": user["role"]})
+
+    user_response = UserResponse(
+        email=user["email"],
+        full_name=user["full_name"],
+        role=user["role"],
+        organization=user["organization"],
+        is_active=user["is_active"],
+        created_at=user.get("created_at", datetime.utcnow())
+    )
+
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=user_response
+    )
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_profile(current_user: dict = Depends(get_current_user)):
+    """
+    Get current authenticated user profile.
+    Available to all authenticated users.
+    """
+    return UserResponse(
+        email=current_user["email"],
+        full_name=current_user["full_name"],
+        role=current_user["role"],
+        organization=current_user["organization"],
+        is_active=current_user["is_active"],
+        created_at=current_user.get("created_at", datetime.utcnow())
+    )
+
+
+class ProfileUpdate(BaseModel):
+    full_name: str = None
+    organization: str = None
+
+
+@router.put("/profile", response_model=UserResponse)
+async def update_profile(
+    profile_data: ProfileUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Update user profile (name, organization).
+    Users can only update their own profile.
+    """
+    db = Database()
+
+    update_dict = {}
+    if profile_data.full_name:
+        update_dict["full_name"] = profile_data.full_name
+    if profile_data.organization:
+        update_dict["organization"] = profile_data.organization
+
+    if not update_dict:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fields to update"
+        )
+
+    result = db.users.update_one(
+        {"email": current_user["email"]},
+        {"$set": update_dict}
+    )
+
+    if result.modified_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update profile"
+        )
+
+    updated_user = db.users.find_one({"email": current_user["email"]})
+
+    return UserResponse(
+        email=updated_user["email"],
+        full_name=updated_user["full_name"],
+        role=updated_user["role"],
+        organization=updated_user["organization"],
+        is_active=updated_user["is_active"],
+        created_at=updated_user.get("created_at", datetime.utcnow())
+    )
+
+
+
+@router.get("/users/list", response_model=dict)
+async def list_users(
+    _: dict = Depends(require_role(UserRole.ADMIN)),
+    limit: int = 50,
+    skip: int = 0
+):
+    """
+    List all users (ADMIN only).
+    """
+    db = Database()
+
+    users = list(db.users.find({}, {"password_hash": 0}).skip(skip).limit(limit))
+    for u in users:
+        u["_id"] = str(u["_id"])
+
+    total = db.users.count_documents({})
+
+    return {
+        "success": True,
+        "data": users,
+        "total": total,
+        "limit": limit,
+        "skip": skip
+    }
+
+
+@router.get("/users/{user_id}", response_model=dict)
+async def get_user_by_id(
+    user_id: str,
+    _: dict = Depends(require_role(UserRole.ADMIN))
+):
+    """
+    Get user by ID (ADMIN only).
+    """
+    db = Database()
+
+    try:
+        user = db.users.find_one({"_id": ObjectId(user_id)}, {"password_hash": 0})
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        user["_id"] = str(user["_id"])
+        return {"success": True, "data": user}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error: {str(e)}"
+        )
+
+
+class UserUpdateAdmin(BaseModel):
+    role: str = None
+    is_active: bool = None
+
+
+@router.put("/users/{user_id}", response_model=dict)
+async def update_user_admin(
+    user_id: str,
+    update_data: UserUpdateAdmin,
+    _: dict = Depends(require_role(UserRole.ADMIN))
+):
+    """
+    Update user role and status (ADMIN only).
+    """
+    db = Database()
+
+    try:
+        update_dict = {}
+        if update_data.role and update_data.role in [UserRole.CLINICIAN, UserRole.RESEARCHER, UserRole.ADMIN, UserRole.AUDITOR]:
+            update_dict["role"] = update_data.role
+        if update_data.is_active is not None:
+            update_dict["is_active"] = update_data.is_active
+
+        if not update_dict:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid fields to update"
+            )
+
+        result = db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": update_dict}
+        )
+
+        if result.matched_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        updated_user = db.users.find_one({"_id": ObjectId(user_id)}, {"password_hash": 0})
+        updated_user["_id"] = str(updated_user["_id"])
+
+        return {"success": True, "data": updated_user}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error: {str(e)}"
+        )
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    _: dict = Depends(require_role(UserRole.ADMIN))
+):
+    """
+    Delete user (ADMIN only).
+    """
+    db = Database()
+
+    try:
+        result = db.users.delete_one({"_id": ObjectId(user_id)})
+
+        if result.deleted_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        return {
+            "success": True,
+            "message": f"User {user_id} deleted successfully"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error: {str(e)}"
+        )
+
+
+
+@router.get("/clinicians/list", response_model=dict)
+async def list_clinicians(_: dict = Depends(require_any_role(UserRole.ADMIN, UserRole.AUDITOR))):
+    """
+    List all clinician users (ADMIN and AUDITOR only).
+    """
+    db = Database()
+
+    clinicians = list(db.users.find({"role": UserRole.CLINICIAN}, {"password_hash": 0}))
+    for c in clinicians:
+        c["_id"] = str(c["_id"])
+
+    return {
+        "success": True,
+        "data": clinicians,
+        "count": len(clinicians)
+    }
+
+
+
+@router.get("/audit/activity", response_model=dict)
+async def get_user_activity(
+    _: dict = Depends(require_role(UserRole.AUDITOR)),
+    limit: int = 100
+):
+    """
+    Get recent user activity (AUDITOR only).
+    """
+    db = Database()
+
+    activity = list(db.audit.find({}).sort("_id", -1).limit(limit))
+    for a in activity:
+        a["_id"] = str(a["_id"])
+
+    return {
+        "success": True,
+        "data": activity,
+        "count": len(activity)
+    }
+
+
+# === src\app\routes\matching_route.py ===
+from fastapi import APIRouter, Depends
+from bson import ObjectId
+from ..services.match_service import MatchService
+from ..core.database import Database
+
+router = APIRouter(prefix="/api/match", tags=["Matching"])
+
+@router.post("/run/{patient_id}")
+async def run_match_pipeline(patient_id: str):
+    db = Database()
+    service = MatchService()
+    
+    patient = db.patients.find_one({"_id": ObjectId(patient_id)})
+    if not patient:
+        return {"error": "Patient not found"}
+    
+    results = service.run_full_match_pipeline(patient)
+    
+    if results:
+        db.matches.insert_many(results)
+        
+    return {"patient": patient["display_id"], "matches": results}
+
+@router.get("/results/{patient_id}")
+async def get_results(patient_id: str):
+    db = Database()
+    matches = list(db.matches.find({"patient_id": patient_id}).sort("confidence_score", -1))
+    for m in matches:
+        m["_id"] = str(m["_id"])
+    return {"success": True, "data": matches}
+
+# === src\app\routes\patients_route.py ===
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from typing import List
+from ..core.database import Database
+from ..services.privacy_manager import PrivacyManager
+from ..services.semantic_search import SemanticSearchService
+from ..models.base import ResponseModel
+from bson import ObjectId
+
+router = APIRouter(prefix="/api/patients", tags=["Patients"])
+
+@router.post("/upload", response_model=ResponseModel)
+async def upload_patient(raw_patient: dict):
+    db = Database()
+    privacy = PrivacyManager()
+    semantic = SemanticSearchService()
+    
+    redacted_data, pii_summary = privacy.redact_for_storage(raw_patient, data_type="patient")
+    
+    redacted_data["embedding"] = semantic.generate_patient_embedding(redacted_data).tolist()
+    
+    result = db.patients.insert_one(redacted_data)
+    patient_id = str(result.inserted_id)
+    
+    audit_log = privacy.create_audit_log(
+        document_type="patient",
+        document_id=patient_id,
+        pii_summary=pii_summary
+    )
+    db.audit.insert_one(audit_log)
+    
+    return {
+        "success": True, 
+        "data": {"id": patient_id, "pii_redacted": pii_summary["total_entities"]},
+        "message": "Patient ingested and redacted successfully"
+    }
+
+@router.get("/", response_model=ResponseModel)
+async def list_patients():
+    db = Database()
+    patients = list(db.patients.find({}, {"embedding": 0}))
+    for p in patients:
+        p["_id"] = str(p["_id"])
+    return {"success": True, "data": patients}
+
+# === src\app\routes\trials_route.py ===
+from fastapi import APIRouter
+from ..core.database import Database
+from ...scrapper.fetch_clinical_trials import ClinicalTrialsFetcher
+from ..services.semantic_search import SemanticSearchService
+from ..services.criteria_extractor import CriteriaExtractor
+
+router = APIRouter(prefix="/api/trials", tags=["Trials"])
+
+@router.get("/")
+async def get_trials(condition: str = None):
+    db = Database()
+    query = {}
+    if condition:
+        query = {"conditions": {"$regex": condition, "$options": "i"}}
+    
+    trials = list(db.trials.find(query, {"embedding": 0}).limit(20))
+    for t in trials:
+        t["_id"] = str(t["_id"])
+    return {"success": True, "data": trials}
+
+@router.post("/sync")
+async def sync_trials(extract_criteria: bool = True):
+    """
+    Sync trials from ClinicalTrials.gov.
+
+    Args:
+        extract_criteria: If true, extract structured eligibility criteria (slower but more useful)
+    """
+    db = Database()
+    fetcher = ClinicalTrialsFetcher()
+    semantic = SemanticSearchService()
+    criteria_extractor = CriteriaExtractor() if extract_criteria else None
+
+    raw_data = fetcher.fetch_trials_paginated(limit=50, max_pages=1)
+    parsed = fetcher.parse_trials(raw_data)
+
+    count = 0
+    extraction_stats = {"success": 0, "failed": 0, "skipped": 0}
+
+    for trial in parsed:
+        trial["embedding"] = semantic.generate_trial_embedding(trial).tolist()
+
+        if criteria_extractor:
+            raw_eligibility = trial.get("eligibility", {}).get("raw_text", "")
+            if raw_eligibility and len(raw_eligibility) > 20:
+                extraction_result = criteria_extractor.extract_criteria(raw_eligibility)
+                if extraction_result.success:
+                    trial["structured_eligibility"] = extraction_result.structured_eligibility.dict()
+                    extraction_stats["success"] += 1
+                else:
+                    extraction_stats["failed"] += 1
+            else:
+                extraction_stats["skipped"] += 1
+
+        db.trials.update_one(
+            {"nct_id": trial["nct_id"]},
+            {"$set": trial},
+            upsert=True
+        )
+        count += 1
+
+    return {
+        "success": True,
+        "message": f"Synced {count} trials",
+        "extraction_stats": extraction_stats if extract_criteria else None
+    }
+
+# === src\app\routes\user_route.py ===
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+
+
+# === src\app\services\auth_service.py ===
+from datetime import datetime, timedelta
+from typing import Optional
+import jwt
+from passlib.context import CryptContext
+from ..config import Config
+from ..core.database import Database 
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+class AuthService:
+    def __init__(self):
+        self.db = Database()
+
+    def verify_password(self, plain_password, hashed_password):
+        return pwd_context.verify(plain_password, hashed_password)
+
+    def get_password_hash(self, password):
+        return pwd_context.hash(password)
+
+    def create_access_token(self, data: dict, expires_delta: Optional[timedelta] = None):
+        to_encode = data.copy()
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(minutes=60)
+        
+        to_encode.update({"exp": expire})
+        encoded_jwt = jwt.encode(to_encode, Config.JWT_SECRET, algorithm="HS256")
+        return encoded_jwt
+
+    def get_user_by_email(self, email: str):
+        return self.db.db.users.find_one({"email": email})
+
+# === src\app\services\criteria_extractor.py ===
+"""
+Criteria Extractor Service
+Converts raw eligibility text into structured, queryable JSON format using LLM
+"""
+
+import json
+import os
+import re
+from datetime import datetime
+from typing import Dict, Any, Optional
+from openai import OpenAI
+
+from ..models.eligibility import (
+    StructuredEligibility,
+    ExtractedCriteria,
+    AgeConstraint,
+    LabValueConstraint,
+    ConditionConstraint,
+    MedicationConstraint,
+    PerformanceStatusConstraint,
+    PregnancyConstraint,
+    ConstraintOperator
+)
+
+
+class CriteriaExtractor:
+    """Extract structured eligibility criteria from raw text using LLM"""
+
+    def __init__(self):
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.model = os.getenv("LLM_MODEL", "gpt-4o")
+
+    def extract_criteria(self, raw_eligibility_text: str) -> ExtractedCriteria:
+        """
+        Parse raw eligibility text into structured format.
+
+        Args:
+            raw_eligibility_text: Raw eligibility criteria from trial
+
+        Returns:
+            ExtractedCriteria with structured eligibility data
+        """
+        if not raw_eligibility_text or len(raw_eligibility_text.strip()) < 10:
+            return ExtractedCriteria(
+                success=False,
+                error_message="Eligibility text is empty or too short",
+                structured_eligibility=None
+            )
+
+        prompt = f"""You are an expert clinical trial specialist. Extract structured eligibility criteria from the following raw text.
+
+RAW ELIGIBILITY TEXT:
+{raw_eligibility_text}
+
+TASK:
+Extract all eligibility criteria into a structured JSON format. Be thorough and conservative - if unclear, note it in extraction_notes.
+
+REQUIRED JSON STRUCTURE:
+{{
+    "age": {{
+        "min_age": <int or null>,
+        "max_age": <int or null>
+    }},
+    "gender": "ALL" | "MALE" | "FEMALE" | "OTHER" | null,
+    "conditions": [
+        {{"condition": "<condition name>", "requirement": "required" | "excluded"}}
+    ],
+    "medications": [
+        {{"medication": "<drug name>", "requirement": "required" | "excluded" | "prior_therapy_allowed"}}
+    ],
+    "lab_values": [
+        {{
+            "test_name": "<test name, e.g., HbA1c>",
+            "operator": "==" | "!=" | ">" | ">=" | "<" | "<=" | "in" | "not_in" | "contains",
+            "value": <float>,
+            "unit": "<unit, e.g., %, mg/dL>" | null
+        }}
+    ],
+    "performance_status": {{
+        "max_ecog": <int 0-4> | null
+    }} | null,
+    "pregnancy": {{
+        "excluded": <boolean>
+    }} | null,
+    "organ_function_constraints": [
+        {{"organ": "kidney|liver|heart", "constraint": "<description>"}}
+    ],
+    "extraction_confidence": <0.0-1.0>,
+    "extraction_notes": "<any ambiguities or important notes>"
+}}
+
+GUIDELINES:
+- Age: Extract numeric values. If "18 years and older", min_age = 18, max_age = null
+- Gender: Look for male/female only restrictions, default to "ALL"
+- Conditions: Separate inclusion from exclusion
+- Lab Values: Extract numeric thresholds with operators (>, <, >=, <=, =)
+- Medications: Common exclusions (pregnant patients, certain drugs)
+- Performance Status: ECOG scores (0=fully active to 4=bedbound)
+- Pregnancy: Mark true if pregnant/nursing are excluded
+- Confidence: Rate extraction confidence (0.0 to 1.0) based on text clarity
+- Extraction Notes: Any uncertainties, assumptions, or special notes
+
+Return ONLY valid JSON, no markdown, no explanation."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.3  # Low temp for consistent extraction
+            )
+
+            extracted_json = json.loads(response.choices[0].message.content)
+
+            structured = self._build_structured_eligibility(extracted_json, raw_eligibility_text)
+
+            return ExtractedCriteria(
+                success=True,
+                structured_eligibility=structured,
+                extraction_notes=extracted_json.get("extraction_notes", "")
+            )
+
+        except json.JSONDecodeError as e:
+            return ExtractedCriteria(
+                success=False,
+                error_message=f"JSON parsing error: {str(e)}",
+                structured_eligibility=None
+            )
+        except Exception as e:
+            return ExtractedCriteria(
+                success=False,
+                error_message=f"Extraction error: {str(e)}",
+                structured_eligibility=None
+            )
+
+    def _build_structured_eligibility(
+        self,
+        extracted_json: Dict[str, Any],
+        raw_text: str
+    ) -> StructuredEligibility:
+        """Build StructuredEligibility object from extracted JSON"""
+
+        age_data = extracted_json.get("age")
+        age_constraint = None
+        if age_data:
+            age_constraint = AgeConstraint(
+                min_age=age_data.get("min_age"),
+                max_age=age_data.get("max_age")
+            )
+
+        gender = extracted_json.get("gender", "ALL")
+
+        conditions = []
+        for cond in extracted_json.get("conditions", []):
+            conditions.append(ConditionConstraint(
+                condition=cond.get("condition", ""),
+                requirement=cond.get("requirement", "required")
+            ))
+
+        medications = []
+        for med in extracted_json.get("medications", []):
+            medications.append(MedicationConstraint(
+                medication=med.get("medication", ""),
+                requirement=med.get("requirement", "excluded")
+            ))
+
+        lab_values = []
+        for lab in extracted_json.get("lab_values", []):
+            try:
+                operator = ConstraintOperator(lab.get("operator", "=="))
+                lab_values.append(LabValueConstraint(
+                    test_name=lab.get("test_name", ""),
+                    operator=operator,
+                    value=float(lab.get("value", 0)),
+                    unit=lab.get("unit")
+                ))
+            except (ValueError, KeyError):
+                continue  # Skip malformed lab values
+
+        performance_data = extracted_json.get("performance_status")
+        performance_status = None
+        if performance_data and performance_data.get("max_ecog") is not None:
+            performance_status = PerformanceStatusConstraint(
+                max_ecog=int(performance_data.get("max_ecog"))
+            )
+
+        pregnancy_data = extracted_json.get("pregnancy")
+        pregnancy = None
+        if pregnancy_data is not None:
+            pregnancy = PregnancyConstraint(
+                excluded=pregnancy_data.get("excluded", True)
+            )
+
+        organ_constraints = extracted_json.get("organ_function_constraints", [])
+
+        return StructuredEligibility(
+            age=age_constraint,
+            gender=gender,
+            conditions=conditions,
+            medications=medications,
+            lab_values=lab_values,
+            performance_status=performance_status,
+            pregnancy=pregnancy,
+            organ_function_constraints=organ_constraints,
+            extraction_confidence=float(extracted_json.get("extraction_confidence", 0.5)),
+            extraction_timestamp=datetime.utcnow().isoformat(),
+            raw_text=raw_text
+        )
+
+    def check_patient_eligibility(
+        self,
+        patient: Dict[str, Any],
+        structured_criteria: StructuredEligibility
+    ) -> Dict[str, Any]:
+        """
+        Check if patient matches structured criteria.
+        Returns detailed matching results.
+        """
+        results = {
+            "overall_match": True,
+            "failed_checks": [],
+            "passed_checks": [],
+            "unclear_checks": []
+        }
+
+        if structured_criteria.age:
+            age = patient.get("demographics", {}).get("age")
+            if age:
+                if structured_criteria.age.min_age and age < structured_criteria.age.min_age:
+                    results["overall_match"] = False
+                    results["failed_checks"].append(
+                        f"Age {age} below minimum {structured_criteria.age.min_age}"
+                    )
+                elif structured_criteria.age.max_age and age > structured_criteria.age.max_age:
+                    results["overall_match"] = False
+                    results["failed_checks"].append(
+                        f"Age {age} above maximum {structured_criteria.age.max_age}"
+                    )
+                else:
+                    results["passed_checks"].append(f"Age {age} within range")
+
+        patient_conditions = set(
+            c.lower() for c in patient.get("conditions", [])
+        )
+        for cond_constraint in structured_criteria.conditions:
+            cond_name = cond_constraint.condition.lower()
+            if cond_constraint.requirement == "required":
+                if cond_name in patient_conditions:
+                    results["passed_checks"].append(f"Has required condition: {cond_constraint.condition}")
+                else:
+                    results["overall_match"] = False
+                    results["failed_checks"].append(f"Missing required condition: {cond_constraint.condition}")
+            elif cond_constraint.requirement == "excluded":
+                if cond_name in patient_conditions:
+                    results["overall_match"] = False
+                    results["failed_checks"].append(f"Has excluded condition: {cond_constraint.condition}")
+                else:
+                    results["passed_checks"].append(f"Does not have excluded condition: {cond_constraint.condition}")
+
+        if structured_criteria.lab_values:
+            patient_labs = patient.get("lab_values", {})
+            for lab_constraint in structured_criteria.lab_values:
+                if lab_constraint.test_name.lower() in [k.lower() for k in patient_labs.keys()]:
+                    results["passed_checks"].append(
+                        f"Has lab test: {lab_constraint.test_name}"
+                    )
+                else:
+                    results["unclear_checks"].append(
+                        f"Lab test {lab_constraint.test_name} not found in patient data"
+                    )
+
+        return results
+
+
+# === src\app\services\geo_service.py ===
+from typing import List, Dict, Any
+from ..core.database import Database
+
+class GeoService:
+    MAX_DISTANCE_METERS = 100000  # 100km
+
+    def __init__(self):
+        self.db = Database()
+
+    def find_nearby_trials(self, coords: List[float], age: int, limit: int = 50):
+        query = {
+            "status": "RECRUITING",
+            "eligibility.min_age": {"$lte": age},
+            "$or": [{"eligibility.max_age": {"$gte": age}}, {"eligibility.max_age": None}],
+            "locations.geo": {
+                "$near": {
+                    "$geometry": {"type": "Point", "coordinates": coords},
+                    "$maxDistance": self.MAX_DISTANCE_METERS
+                }
+            }
+        }
+        return list(self.db.trials.find(query).limit(limit))
+
+    def calculate_distance(self, p_coords: List[float], t_location: Dict) -> float:
+        try:
+            t_coords = t_location.get("geo", {}).get("coordinates", [0, 0])
+            lon_diff = (t_coords[0] - p_coords[0]) * 111.32
+            lat_diff = (t_coords[1] - p_coords[1]) * 110.57
+            return round((lon_diff**2 + lat_diff**2) ** 0.5, 1)
+        except:
+            return 0.0
+
+# === src\app\services\llm_service.py ===
+import json, os
+from openai import OpenAI
+from typing import Dict
+
+class LLMService:
+    def __init__(self):
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.model = os.getenv("LLM_MODEL", "gpt-4o")
+
+    def analyze_eligibility(self, patient: Dict, trial: Dict) -> Dict:
+        prompt = f"""
+        Analyze if Patient is eligible for Trial.
+        PATIENT: {patient.get('conditions')}, Labs: {patient.get('lab_values')}
+        TRIAL CRITERIA: {trial['eligibility']['raw_text']}
+        
+        Return JSON ONLY:
+        {{
+            "status": "ELIGIBLE" | "INELIGIBLE" | "REVIEW_NEEDED",
+            "confidence": 0.0-1.0,
+            "reasoning": "Clinical explanation",
+            "criteria_met": [], "criteria_failed": []
+        }}
+        """
+        try:
+            res = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            return json.loads(res.choices[0].message.content)
+        except Exception as e:
+            return {"status": "REVIEW_NEEDED", "reasoning": str(e), "confidence": 0.5}
+
+# === src\app\services\match_engine.py ===
+from .geo_service import GeoService
+from .llm_service import LLMService
+from .semantic_search import SemanticSearchService
+from datetime import datetime
+
+class MatchingEngine:
+    def __init__(self):
+        self.geo = GeoService()
+        self.llm = LLMService()
+        self.semantic = SemanticSearchService()
+
+    def run_full_pipeline(self, patient: dict, limit: int = 5):
+        coords = patient["demographics"]["location"]["coordinates"]
+        age = patient["demographics"]["age"]
+        candidates = self.geo.find_nearby_trials(coords, age)
+
+        ranked = self.semantic.rank_trials(patient, candidates)
+
+        final_matches = []
+        for trial in ranked[:limit]:
+            analysis = self.llm.analyze_eligibility(patient, trial)
+            
+            dist = self.geo.calculate_distance(coords, trial["locations"][0])
+
+            final_matches.append({
+                "patient_id": str(patient["_id"]),
+                "nct_id": trial["nct_id"],
+                "status": analysis["status"],
+                "confidence_score": analysis["confidence"],
+                "explanation": analysis["reasoning"],
+                "distance_km": dist,
+                "run_date": datetime.utcnow()
+            })
+        return final_matches
+
+# === src\app\services\match_service.py ===
+import os
+import json
+from openai import OpenAI
+from datetime import datetime
+from bson import ObjectId
+from ..core.database import Database
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+class MatchingService:
+    def __init__(self):
+        self.db = Database()
+
+    def find_nearby_candidates(self, patient: dict, radius_km: int = 100):
+        """Phase 1: Hard Filter (Geo + Age + Status)"""
+        if not patient.get('demographics'):
+            return []
+
+        coords = patient['demographics']['location']['coordinates']
+        age = patient['demographics']['age']
+
+        query = {
+            "status": "RECRUITING",
+            "eligibility.min_age": {"$lte": age},
+            "$or": [
+                {"eligibility.max_age": {"$gte": age}},
+                {"eligibility.max_age": None}
+            ],
+            "locations.geo": {
+                "$near": {
+                    "$geometry": { "type": "Point", "coordinates": coords },
+                    "$maxDistance": radius_km * 1000 
+                }
+            }
+        }
+        return list(self.db.clinical_trials.find(query).limit(10))
+
+    def analyze_with_llm(self, patient: dict, trial: dict):
+        """Phase 2: AI Analysis"""
+        prompt = f"""
+        Act as a Clinical Research Coordinator.
+        
+        PATIENT:
+        - Age: {patient['demographics']['age']}
+        - Conditions: {[c['name'] for c in patient.get('conditions', [])]}
+        - Labs: {[f"{l['name']}: {l['value']}" for l in patient.get('lab_values', [])]}
+        - Notes: {patient.get('clinical_notes_text', 'N/A')}
+
+        TRIAL CRITERIA:
+        {trial['eligibility']['raw_text']}
+
+        TASK:
+        Compare strictly. Return JSON ONLY:
+        {{
+            "status": "ELIGIBLE" (or "INELIGIBLE", "REVIEW_NEEDED"),
+            "confidence": 0.0 to 1.0,
+            "summary": "1 sentence explanation",
+            "criteria_met": ["list of strings"],
+            "criteria_failed": ["list of strings"],
+            "warnings": ["list of strings"]
+        }}
+        """
+
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o", 
+                response_format={ "type": "json_object" },
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            print(f"LLM Error: {e}")
+            return {"status": "REVIEW_NEEDED", "confidence": 0.0, "summary": "AI Error", "analysis": {}}
+
+    def save_match_result(self, patient_id, trial_id, analysis, distance):
+        record = {
+            "patient_id": str(patient_id),
+            "nct_id": trial_id,
+            "run_date": datetime.utcnow(),
+            "status": analysis.get('status', 'REVIEW_NEEDED'),
+            "confidence_score": analysis.get('confidence', 0),
+            "analysis": analysis,
+            "distance_km": distance
+        }
+        result = self.db.db.match_results.insert_one(record)
+        record['_id'] = str(result.inserted_id)
+        return record
+
+# === src\app\services\patient_service.py ===
+from bson import ObjectId
+from ..core.database import Database
+
+class PatientService:
+    def __init__(self):
+        self.db = Database()
+
+    def get_all_patients(self, limit=20):
+        patients = list(self.db.db.patients.find(
+            {}, 
+            {"display_id": 1, "demographics": 1, "conditions": 1}
+        ).limit(limit))
+        
+        for p in patients:
+            p['_id'] = str(p['_id'])
+        return patients
+
+    def get_patient_by_id(self, patient_id: str):
+        try:
+            return self.db.db.patients.find_one({"_id": ObjectId(patient_id)})
+        except:
+            return None
+
+# === src\app\services\pii_redaction.py ===
+"""
+PII Redaction Service using Microsoft Presidio
+Detects and redacts sensitive information from clinical data
+"""
+
+from typing import Dict, Any, List, Optional, Tuple
+from datetime import datetime
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import OperatorConfig
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class PIIRedactionService:
+    """Handle PII detection and redaction using Microsoft Presidio"""
+
+    def __init__(self):
+        """Initialize Presidio analyzer and anonymizer"""
+        try:
+            self.analyzer = AnalyzerEngine()
+            self.anonymizer = AnonymizerEngine()
+            logger.info("Presidio engines initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing Presidio: {e}")
+            raise
+
+    def analyze_text(self, text: str, language: str = "en") -> List[Dict[str, Any]]:
+        """
+        Analyze text for PII entities
+
+        Args:
+            text: Text to analyze
+            language: Language code (default: 'en' for English)
+
+        Returns:
+            List of detected PII entities with locations and scores
+        """
+        if not text:
+            return []
+
+        try:
+            results = self.analyzer.analyze(
+                text=text,
+                language=language,
+                score_threshold=0.5
+            )
+
+            entities = []
+            for result in results:
+                entities.append({
+                    "entity_type": result.entity_type,
+                    "start": result.start,
+                    "end": result.end,
+                    "score": result.score,
+                    "text_sample": text[result.start:min(result.end + 5, len(text))]
+                })
+
+            return entities
+
+        except Exception as e:
+            logger.error(f"Error analyzing text: {e}")
+            return []
+
+    def redact_text(
+        self,
+        text: str,
+        operators: Optional[Dict[str, OperatorConfig]] = None
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """
+        Redact PII entities from text
+
+        Args:
+            text: Text to redact
+            operators: Custom operators for different entity types
+                      (default: replace with [ENTITY_TYPE])
+
+        Returns:
+            Tuple of (redacted_text, detected_entities)
+        """
+        if not text:
+            return text, []
+
+        try:
+            entities = self.analyze_text(text)
+
+            if not entities:
+                return text, []
+
+            if operators is None:
+                operators = {
+                    "PERSON": OperatorConfig("replace", {"new_value": "[PERSON]"}),
+                    "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "[EMAIL]"}),
+                    "PHONE_NUMBER": OperatorConfig("replace", {"new_value": "[PHONE]"}),
+                    "MEDICAL_LICENSE": OperatorConfig("replace", {"new_value": "[LICENSE]"}),
+                    "URL": OperatorConfig("replace", {"new_value": "[URL]"}),
+                    "CREDIT_CARD": OperatorConfig("replace", {"new_value": "[CREDIT_CARD]"}),
+                    "SSID": OperatorConfig("replace", {"new_value": "[SSN]"}),
+                    "DATE_TIME": OperatorConfig("replace", {"new_value": "[DATE]"}),
+                }
+
+            redacted = self.anonymizer.anonymize(
+                text=text,
+                analyzer_results=self.analyzer.analyze(text, language="en"),
+                operators=operators
+            )
+
+            return redacted.text, entities
+
+        except Exception as e:
+            logger.error(f"Error redacting text: {e}")
+            return text, []
+
+    def redact_patient_record(
+        self,
+        patient: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Redact PII from a complete patient record
+
+        Args:
+            patient: Patient document from database
+
+        Returns:
+            Tuple of (redacted_patient, pii_summary)
+        """
+        redacted = patient.copy()
+        pii_summary = {
+            "has_pii": False,
+            "redacted_fields": [],
+            "entity_counts": {},
+            "total_entities": 0
+        }
+
+        text_fields = [
+            "clinical_notes_text",
+            "demographics.notes",
+            "medical_history"
+        ]
+
+        for field_path in text_fields:
+            keys = field_path.split(".")
+            value = redacted
+            parent = None
+            last_key = None
+
+            for i, key in enumerate(keys[:-1]):
+                if isinstance(value, dict) and key in value:
+                    parent = value
+                    value = value[key]
+                else:
+                    break
+
+            last_key = keys[-1]
+
+            if isinstance(value, dict) and last_key in value:
+                original_text = value[last_key]
+                redacted_text, entities = self.redact_text(original_text)
+
+                if entities:
+                    pii_summary["has_pii"] = True
+                    pii_summary["redacted_fields"].append(field_path)
+                    pii_summary["total_entities"] += len(entities)
+
+                    for entity in entities:
+                        entity_type = entity["entity_type"]
+                        pii_summary["entity_counts"][entity_type] = \
+                            pii_summary["entity_counts"].get(entity_type, 0) + 1
+
+                    value[last_key] = redacted_text
+
+        return redacted, pii_summary
+
+    def redact_trial_record(
+        self,
+        trial: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Redact PII from a clinical trial record
+
+        Args:
+            trial: Trial document
+
+        Returns:
+            Tuple of (redacted_trial, pii_summary)
+        """
+        redacted = trial.copy()
+        pii_summary = {
+            "has_pii": False,
+            "redacted_fields": [],
+            "entity_counts": {},
+            "total_entities": 0
+        }
+
+        text_fields = [
+            ("eligibility", "raw_text"),
+            ("description",),
+        ]
+
+        for field_path in text_fields:
+            try:
+                value = redacted
+                for key in field_path[:-1]:
+                    if isinstance(value, dict):
+                        value = value.get(key, {})
+                    else:
+                        break
+
+                last_key = field_path[-1]
+
+                if isinstance(value, dict) and last_key in value:
+                    original_text = str(value[last_key])
+                    redacted_text, entities = self.redact_text(original_text)
+
+                    if entities:
+                        field_name = ".".join(field_path)
+                        pii_summary["has_pii"] = True
+                        pii_summary["redacted_fields"].append(field_name)
+                        pii_summary["total_entities"] += len(entities)
+
+                        for entity in entities:
+                            entity_type = entity["entity_type"]
+                            pii_summary["entity_counts"][entity_type] = \
+                                pii_summary["entity_counts"].get(entity_type, 0) + 1
+
+                        value[last_key] = redacted_text
+
+            except Exception as e:
+                logger.warning(f"Error redacting field {field_path}: {e}")
+
+        return redacted, pii_summary
+
+    def check_for_pii(self, text: str) -> Dict[str, Any]:
+        """
+        Check if text contains PII without redacting
+
+        Args:
+            text: Text to check
+
+        Returns:
+            Dictionary with PII detection results
+        """
+        entities = self.analyze_text(text)
+
+        return {
+            "has_pii": len(entities) > 0,
+            "entity_count": len(entities),
+            "entities": entities,
+            "entity_summary": {
+                entity["entity_type"]: sum(
+                    1 for e in entities if e["entity_type"] == entity["entity_type"]
+                )
+                for entity in entities
+            }
+        }
+
+    def get_high_confidence_entities(
+        self,
+        text: str,
+        min_score: float = 0.8
+    ) -> List[Dict[str, Any]]:
+        """
+        Get only high-confidence PII detections
+
+        Args:
+            text: Text to analyze
+            min_score: Minimum confidence score (0-1)
+
+        Returns:
+            List of high-confidence entities
+        """
+        all_entities = self.analyze_text(text)
+        return [e for e in all_entities if e["score"] >= min_score]
+
+
+class PIIRedactionAuditLog:
+    """Helper class to structure PII redaction audit logs"""
+
+    @staticmethod
+    def create_redaction_log(
+        document_type: str,
+        document_id: str,
+        pii_summary: Dict[str, Any],
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create audit log entry for PII redaction
+
+        Args:
+            document_type: Type of document (patient, trial, etc)
+            document_id: ID of the document
+            pii_summary: PII detection summary from redaction
+            user_id: User who triggered the redaction
+
+        Returns:
+            Audit log entry
+        """
+        return {
+            "timestamp": datetime.utcnow(),
+            "event_type": "PII_REDACTED",
+            "document_type": document_type,
+            "document_id": document_id,
+            "user_id": user_id,
+            "details": {
+                "has_pii": pii_summary["has_pii"],
+                "total_entities_redacted": pii_summary["total_entities"],
+                "entity_types": pii_summary["entity_counts"],
+                "redacted_fields": pii_summary["redacted_fields"]
+            }
+        }
+
+
+# === src\app\services\privacy_manager.py ===
+"""
+Privacy Manager - Unified PII handling
+Encapsulates all privacy/compliance logic
+"""
+
+from typing import Dict, Any, Tuple, Optional
+from datetime import datetime
+from .pii_redaction import PIIRedactionService, PIIRedactionAuditLog
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class PrivacyManager:
+    """
+    High-level privacy/compliance manager
+    Coordinates PII detection, redaction, and audit logging
+    """
+
+    def __init__(self):
+        """Initialize privacy manager with PII service"""
+        self.pii_service = PIIRedactionService()
+
+    def redact_for_storage(
+        self,
+        data: Dict[str, Any],
+        data_type: str = "patient"
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Redact PII from data before storage (main use case)
+
+        Args:
+            data: Data to redact (patient, trial, etc.)
+            data_type: Type of data ("patient", "trial")
+
+        Returns:
+            Tuple of (redacted_data, pii_summary)
+        """
+        if data_type == "patient":
+            return self.pii_service.redact_patient_record(data)
+        elif data_type == "trial":
+            return self.pii_service.redact_trial_record(data)
+        else:
+            logger.warning(f"Unknown data type: {data_type}")
+            return data, {"has_pii": False, "entity_counts": {}, "total_entities": 0}
+
+    def audit_for_pii(
+        self,
+        data: Dict[str, Any],
+        data_type: str = "patient",
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Check for PII without modifying (audit/compliance mode)
+
+        Args:
+            data: Data to check
+            data_type: Type of data
+            user_id: User performing the audit
+
+        Returns:
+            Audit results with PII findings
+        """
+        if data_type == "patient":
+            return self._audit_patient(data, user_id)
+        elif data_type == "trial":
+            return self._audit_trial(data, user_id)
+        else:
+            return {"error": f"Unknown data type: {data_type}"}
+
+    def _audit_patient(
+        self,
+        patient: Dict[str, Any],
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Audit patient for PII"""
+        text_fields = [
+            "clinical_notes_text",
+            "demographics.notes"
+        ]
+
+        results = {}
+        has_any_pii = False
+
+        for field_path in text_fields:
+            keys = field_path.split(".")
+            value = patient
+            for key in keys:
+                if isinstance(value, dict):
+                    value = value.get(key)
+                else:
+                    break
+
+            if isinstance(value, str):
+                pii_check = self.pii_service.check_for_pii(value)
+                results[field_path] = pii_check
+                if pii_check["has_pii"]:
+                    has_any_pii = True
+
+        return {
+            "document_type": "patient",
+            "document_id": str(patient.get("_id", "unknown")),
+            "has_pii": has_any_pii,
+            "field_results": results,
+            "audited_by": user_id,
+            "audit_timestamp": datetime.utcnow().isoformat()
+        }
+
+    def _audit_trial(
+        self,
+        trial: Dict[str, Any],
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Audit trial for PII"""
+        text_fields = [
+            ("eligibility", "raw_text"),
+            ("description",)
+        ]
+
+        results = {}
+        has_any_pii = False
+
+        for field_path in text_fields:
+            try:
+                value = trial
+                for key in field_path[:-1]:
+                    if isinstance(value, dict):
+                        value = value.get(key, {})
+
+                last_key = field_path[-1]
+                if isinstance(value, dict) and last_key in value:
+                    text_value = str(value[last_key])
+                    field_name = ".".join(field_path)
+                    pii_check = self.pii_service.check_for_pii(text_value)
+                    results[field_name] = pii_check
+                    if pii_check["has_pii"]:
+                        has_any_pii = True
+            except Exception as e:
+                logger.warning(f"Error auditing field {field_path}: {e}")
+
+        return {
+            "document_type": "trial",
+            "document_id": trial.get("nct_id", "unknown"),
+            "has_pii": has_any_pii,
+            "field_results": results,
+            "audited_by": user_id,
+            "audit_timestamp": datetime.utcnow().isoformat()
+        }
+
+    def check_text_for_pii(self, text: str) -> Dict[str, Any]:
+        """
+        Check arbitrary text for PII
+
+        Args:
+            text: Text to check
+
+        Returns:
+            PII detection results
+        """
+        return self.pii_service.check_for_pii(text)
+
+    def create_audit_log(
+        self,
+        document_type: str,
+        document_id: str,
+        pii_summary: Dict[str, Any],
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create audit log entry for PII redaction
+
+        Args:
+            document_type: Type of document (patient, trial)
+            document_id: ID of document
+            pii_summary: PII detection summary
+            user_id: User who triggered the action
+
+        Returns:
+            Audit log entry ready for insertion
+        """
+        return PIIRedactionAuditLog.create_redaction_log(
+            document_type=document_type,
+            document_id=document_id,
+            pii_summary=pii_summary,
+            user_id=user_id
+        )
+
+    def get_high_confidence_pii(
+        self,
+        text: str,
+        min_score: float = 0.8
+    ) -> Dict[str, Any]:
+        """
+        Get only high-confidence PII detections
+
+        Args:
+            text: Text to analyze
+            min_score: Minimum confidence score
+
+        Returns:
+            High-confidence PII entities
+        """
+        entities = self.pii_service.get_high_confidence_entities(text, min_score)
+        return {
+            "has_high_confidence_pii": len(entities) > 0,
+            "entity_count": len(entities),
+            "entities": entities,
+            "min_score": min_score
+        }
+
+
+# === src\app\services\semantic_search.py ===
+"""
+Semantic Search Service using Sentence Transformers
+Replaces local filtering with intelligent semantic similarity matching
+"""
+
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
+import numpy as np
+import logging
+from sentence_transformers import SentenceTransformer, util
+
+logger = logging.getLogger(__name__)
+
+
+class SemanticSearchService:
+    """
+    Semantic search using sentence-transformers
+    Finds clinically relevant trials based on semantic similarity
+    """
+
+    def __init__(self, model_name: str = "sentence-transformers/biomedical-mpnet-base"):
+        """
+        Initialize semantic search with biomedical model
+
+        Args:
+            model_name: Sentence transformer model to use
+                Default: biomedical-mpnet-base (optimized for medical/clinical text)
+        """
+        try:
+            self.model = SentenceTransformer(model_name)
+            self.model_name = model_name
+            logger.info(f"Semantic Search initialized with {model_name}")
+        except Exception as e:
+            logger.error(f"Error loading model {model_name}: {e}")
+            self.model = SentenceTransformer("all-MiniLM-L6-v2")
+            self.model_name = "all-MiniLM-L6-v2"
+            logger.warning("Fallback to general-purpose model")
+
+    def generate_patient_embedding(self, patient: Dict[str, Any]) -> np.ndarray:
+        """
+        Generate semantic embedding for patient profile
+
+        Args:
+            patient: Patient document with conditions, medications, notes
+
+        Returns:
+            Numpy array of embeddings
+        """
+        try:
+            patient_text_parts = []
+
+            conditions = patient.get("conditions", [])
+            if conditions:
+                condition_names = [c.get("name", "") for c in conditions]
+                patient_text_parts.append(f"Conditions: {', '.join(condition_names)}")
+
+            medications = patient.get("medications", [])
+            if medications:
+                med_names = [m.get("name", "") for m in medications]
+                patient_text_parts.append(f"Medications: {', '.join(med_names)}")
+
+            lab_values = patient.get("lab_values", [])
+            if lab_values:
+                lab_text = ", ".join([f"{l.get('name')}: {l.get('value')}" for l in lab_values])
+                patient_text_parts.append(f"Lab values: {lab_text}")
+
+            age = patient.get("demographics", {}).get("age")
+            if age:
+                patient_text_parts.append(f"Age: {age} years")
+
+            notes = patient.get("clinical_notes_text", "")
+            if notes:
+                notes = self._sanitize_text(notes)
+                patient_text_parts.append(f"Clinical notes: {notes[:500]}")  # Limit length
+
+            patient_context = " ".join(patient_text_parts)
+
+            if not patient_context.strip():
+                patient_context = "Patient with unknown conditions"
+
+            embedding = self.model.encode(patient_context, convert_to_numpy=True)
+            return embedding
+
+        except Exception as e:
+            logger.error(f"Error generating patient embedding: {e}")
+            return np.zeros(self.model.get_sentence_embedding_dimension())
+
+    def generate_trial_embedding(self, trial: Dict[str, Any]) -> np.ndarray:
+        """
+        Generate semantic embedding for trial profile
+
+        Args:
+            trial: Trial document with conditions, interventions, eligibility
+
+        Returns:
+            Numpy array of embeddings
+        """
+        try:
+            trial_text_parts = []
+
+            title = trial.get("title", "")
+            if title:
+                trial_text_parts.append(f"Trial: {title}")
+
+            conditions = trial.get("conditions", [])
+            if conditions:
+                trial_text_parts.append(f"Conditions: {', '.join(conditions)}")
+
+            keywords = trial.get("keywords", [])
+            if keywords:
+                trial_text_parts.append(f"Keywords: {', '.join(keywords)}")
+
+            phase = trial.get("phase")
+            if phase:
+                trial_text_parts.append(f"Phase: {phase}")
+
+            interventions = trial.get("interventions", [])
+            if interventions:
+                intervention_names = [i.get("name", "") for i in interventions]
+                trial_text_parts.append(f"Interventions: {', '.join(intervention_names)}")
+
+            eligibility = trial.get("eligibility", {})
+            if eligibility:
+                raw_text = eligibility.get("raw_text", "")
+                if raw_text:
+                    trial_text_parts.append(f"Eligibility: {raw_text[:300]}")
+
+            sponsor = trial.get("sponsor")
+            if sponsor:
+                trial_text_parts.append(f"Sponsor: {sponsor}")
+
+            trial_context = " ".join(trial_text_parts)
+
+            if not trial_context.strip():
+                trial_context = "Clinical trial with unknown information"
+
+            embedding = self.model.encode(trial_context, convert_to_numpy=True)
+            return embedding
+
+        except Exception as e:
+            logger.error(f"Error generating trial embedding: {e}")
+            return np.zeros(self.model.get_sentence_embedding_dimension())
+
+    def find_semantically_similar_trials(
+        self,
+        patient_embedding: np.ndarray,
+        trial_embeddings: List[Tuple[str, np.ndarray]],
+        threshold: float = 0.3,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Find trials semantically similar to patient profile
+
+        Args:
+            patient_embedding: Patient semantic embedding
+            trial_embeddings: List of (trial_id, embedding) tuples
+            threshold: Minimum similarity score (0-1)
+            limit: Max results to return
+
+        Returns:
+            List of dicts with trial_id and similarity_score
+        """
+        if not trial_embeddings:
+            return []
+
+        try:
+            results = []
+
+            for trial_id, trial_embedding in trial_embeddings:
+                similarity = util.pytorch_cos_sim(
+                    patient_embedding.reshape(1, -1),
+                    trial_embedding.reshape(1, -1)
+                ).item()
+
+                if similarity >= threshold:
+                    results.append({
+                        "trial_id": trial_id,
+                        "semantic_similarity": float(similarity),
+                        "match_source": "semantic"
+                    })
+
+            results = sorted(results, key=lambda x: x["semantic_similarity"], reverse=True)
+
+            return results[:limit]
+
+        except Exception as e:
+            logger.error(f"Error finding similar trials: {e}")
+            return []
+
+    def calculate_semantic_match_score(
+        self,
+        patient: Dict[str, Any],
+        trial: Dict[str, Any]
+    ) -> float:
+        """
+        Calculate semantic match score between patient and trial (0-1)
+
+        Args:
+            patient: Patient document
+            trial: Trial document
+
+        Returns:
+            Similarity score (0-1)
+        """
+        try:
+            patient_embedding = self.generate_patient_embedding(patient)
+            trial_embedding = self.generate_trial_embedding(trial)
+
+            similarity = util.pytorch_cos_sim(
+                patient_embedding.reshape(1, -1),
+                trial_embedding.reshape(1, -1)
+            ).item()
+
+            return float(similarity)
+
+        except Exception as e:
+            logger.error(f"Error calculating semantic score: {e}")
+            return 0.0
+
+    def batch_generate_embeddings(
+        self,
+        texts: List[str],
+        batch_size: int = 32
+    ) -> List[np.ndarray]:
+        """
+        Generate embeddings for multiple texts in batches
+
+        Args:
+            texts: List of text strings
+            batch_size: Batch size for encoding
+
+        Returns:
+            List of embeddings
+        """
+        try:
+            embeddings = self.model.encode(
+                texts,
+                batch_size=batch_size,
+                convert_to_numpy=True,
+                show_progress_bar=False
+            )
+            return list(embeddings)
+        except Exception as e:
+            logger.error(f"Error batch generating embeddings: {e}")
+            return [np.zeros(self.model.get_sentence_embedding_dimension()) for _ in texts]
+
+    def find_similar_conditions(
+        self,
+        condition: str,
+        all_conditions: List[str],
+        threshold: float = 0.5,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Find similar conditions using semantic similarity
+
+        Args:
+            condition: Target condition
+            all_conditions: List of all conditions
+            threshold: Minimum similarity score
+            limit: Max results
+
+        Returns:
+            List of similar conditions with scores
+        """
+        try:
+            condition_embedding = self.model.encode(condition, convert_to_numpy=True)
+            all_embeddings = self.batch_generate_embeddings(all_conditions)
+
+            results = []
+            for cond, embedding in zip(all_conditions, all_embeddings):
+                if cond.lower() == condition.lower():
+                    continue  # Skip exact match
+
+                similarity = util.pytorch_cos_sim(
+                    condition_embedding.reshape(1, -1),
+                    embedding.reshape(1, -1)
+                ).item()
+
+                if similarity >= threshold:
+                    results.append({
+                        "condition": cond,
+                        "similarity": float(similarity)
+                    })
+
+            results = sorted(results, key=lambda x: x["similarity"], reverse=True)
+            return results[:limit]
+
+        except Exception as e:
+            logger.error(f"Error finding similar conditions: {e}")
+            return []
+
+    @staticmethod
+    def _sanitize_text(text: str) -> str:
+        """
+        Remove potential PII patterns from text before embedding
+
+        Args:
+            text: Text to sanitize
+
+        Returns:
+            Sanitized text
+        """
+        if not text:
+            return ""
+
+        import re
+
+        text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL]', text)
+
+        text = re.sub(r'\b(?:\d{3}[-.]?)?\d{3}[-.]?\d{4}\b', '[PHONE]', text)
+
+        text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]', text)
+
+        text = re.sub(r'\b(?:MRN|MR|PAT)?[\s:]*\d{6,10}\b', '[MRN]', text)
+
+        return text
+
+    def get_embedding_dimension(self) -> int:
+        """Get embedding vector dimension"""
+        return self.model.get_sentence_embedding_dimension()
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get information about loaded model"""
+        return {
+            "model_name": self.model_name,
+            "embedding_dimension": self.get_embedding_dimension(),
+            "max_seq_length": self.model.max_seq_length
+        }
+
+
+class TrialEmbeddingCache:
+    """Cache embeddings to avoid recalculating"""
+
+    def __init__(self):
+        self.cache: Dict[str, np.ndarray] = {}
+        self.timestamps: Dict[str, datetime] = {}
+        self.max_age_seconds = 3600  # 1 hour
+
+    def get(self, trial_id: str) -> Optional[np.ndarray]:
+        """Get cached embedding"""
+        if trial_id not in self.cache:
+            return None
+
+        age = (datetime.utcnow() - self.timestamps[trial_id]).total_seconds()
+        if age > self.max_age_seconds:
+            del self.cache[trial_id]
+            del self.timestamps[trial_id]
+            return None
+
+        return self.cache[trial_id]
+
+    def set(self, trial_id: str, embedding: np.ndarray):
+        """Cache embedding"""
+        self.cache[trial_id] = embedding
+        self.timestamps[trial_id] = datetime.utcnow()
+
+    def clear(self):
+        """Clear all cached embeddings"""
+        self.cache.clear()
+        self.timestamps.clear()
+
+    def size(self) -> int:
+        """Get cache size"""
+        return len(self.cache)
+
+
+# === src\app\services\services.py ===
+
+
+# === src\main.py ===
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.config import Config
+from app.routes import matching_route, trials_route, patients_route, analytics_route, auth_route
+
+app = FastAPI(title="Trial Match Intelligence System")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth_route.router)
+app.include_router(patients_route.router)
+app.include_router(matching_route.router)
+app.include_router(trials_route.router)
+app.include_router(analytics_route.router)
+
+
+@app.get("/")
+async def health():
+    return {"status": "Intelligent Matcher Online", "version": "2.0"}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=Config.PORT)
+
+# === src\scrapper\__init__.py ===
+
+
+# === src\scrapper\fetch_clinical_trials.py ===
+"""
+Fetch clinical trial data from ClinicalTrials.gov API
+https://clinicaltrials.gov/data-api/api
+
+Note: The v2 API at /api/v2/studies does not support filtering via query parameters.
+This script fetches all trials via pagination and provides local filtering capabilities.
+"""
+
+import requests
+import json
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+
+BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
+
+
+class ClinicalTrialsFetcher:
+    """Fetch and parse data from ClinicalTrials.gov API"""
+
+    def __init__(self, api_url: str = BASE_URL):
+        self.api_url = api_url
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (compatible; TrialMatch/1.0)'
+        })
+
+    def fetch_trials_paginated(
+        self,
+        limit: int = 100,
+        max_pages: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Fetch trials with pagination using nextPageToken
+
+        Args:
+            limit: Number of results per page (default 100)
+            max_pages: Maximum pages to fetch (None = fetch all)
+
+        Returns:
+            Dictionary containing all trials data
+        """
+        all_studies = []
+        next_token = None
+        page_count = 0
+
+        try:
+            while True:
+                params = {"pageSize": min(limit, 1000)}
+                if next_token:
+                    params["pageToken"] = next_token
+
+                print(f"Fetching page {page_count + 1}...")
+                response = self.session.get(self.api_url, params=params, timeout=30)
+                response.raise_for_status()
+
+                data = response.json()
+                studies = data.get("studies", [])
+                all_studies.extend(studies)
+                page_count += 1
+
+                print(f"  Got {len(studies)} studies (total: {len(all_studies)})")
+
+                next_token = data.get("nextPageToken")
+                if not next_token or (max_pages and page_count >= max_pages):
+                    break
+
+            return {
+                "studies": all_studies,
+                "totalCount": len(all_studies),
+                "pagesRetrieved": page_count
+            }
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching trials: {e}")
+            return {
+                "studies": all_studies,
+                "totalCount": len(all_studies),
+                "pagesRetrieved": page_count,
+                "error": str(e)
+            }
+
+    def fetch_trial_by_nct_id(self, nct_id: str) -> Dict[str, Any]:
+        """
+        Fetch a specific trial by NCT ID
+
+        Args:
+            nct_id: The NCT ID of the trial (e.g., 'NCT04234699')
+
+        Returns:
+            Dictionary containing trial details
+        """
+        url = f"{self.api_url}/{nct_id}"
+        try:
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching trial {nct_id}: {e}")
+            return {"error": str(e)}
+
+    def _normalize_status(self, api_status: str) -> str:
+        """
+        Map API status to RecruitmentStatus enum values
+
+        Args:
+            api_status: Status from API
+
+        Returns:
+            Status matching RecruitmentStatus enum
+        """
+        status_map = {
+            "Recruiting": "RECRUITING",
+            "Active, not recruiting": "ACTIVE_NOT_RECRUITING",
+            "Enrolling by invitation": "ENROLLING_BY_INVITATION",
+            "Not yet recruiting": "NOT_YET_RECRUITING",
+            "Completed": "COMPLETED",
+            "Suspended": "SUSPENDED",
+            "Terminated": "TERMINATED",
+            "Withdrawn": "WITHDRAWN",
+        }
+        return status_map.get(api_status, "NOT_YET_RECRUITING")
+
+    def _parse_date(self, date_str: Optional[str]) -> Optional[datetime]:
+        """Parse date string to datetime object"""
+        if not date_str:
+            return None
+        try:
+            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        except:
+            try:
+                return datetime.strptime(date_str, "%B %d, %Y")
+            except:
+                return None
+
+    def _get_eligibility(self, protocol_section: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract eligibility criteria from protocol section"""
+        eligibility_module = protocol_section.get("eligibilityModule", {})
+
+        min_age = None
+        max_age = None
+        gender = "ALL"
+        raw_text = ""
+
+        min_age_info = eligibility_module.get("minimumAge")
+        if min_age_info:
+            try:
+                min_age = int(min_age_info.split()[0])
+            except:
+                pass
+
+        max_age_info = eligibility_module.get("maximumAge")
+        if max_age_info:
+            try:
+                max_age = int(max_age_info.split()[0])
+            except:
+                pass
+
+        gender_based = eligibility_module.get("genderBased", False)
+        if gender_based:
+            gender_str = eligibility_module.get("gender", "ALL").upper()
+            gender = gender_str if gender_str in ["MALE", "FEMALE"] else "ALL"
+
+        raw_text = eligibility_module.get("eligibilityCriteria", "")
+        if not raw_text:
+            raw_text = f"Age {min_age_info or '18+'} - {max_age_info or 'no max'}, Gender: {gender}"
+
+        return {
+            "min_age": min_age,
+            "max_age": max_age,
+            "gender": gender,
+            "raw_text": raw_text or "Not specified"
+        }
+
+    def _get_locations_with_geo(self, contacts_locations_module: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Extract locations and add geocoding placeholders
+        In production, would call geocoding API (Google Maps, etc.)
+        """
+        locations = []
+
+        for loc in contacts_locations_module.get("locations", []):
+            facility = loc.get("facility", "Unknown Facility")
+            city = loc.get("city", "")
+            state = loc.get("state", "")
+            country = loc.get("country", "")
+
+            city_coords = {
+                "San Francisco": [-122.45, 37.76],
+                "New York": [-73.97, 40.78],
+                "Los Angeles": [-118.24, 34.05],
+                "Boston": [-71.06, 42.36],
+                "Chicago": [-87.62, 41.88],
+                "Houston": [-95.36, 29.76],
+                "Phoenix": [-112.07, 33.45],
+                "Philadelphia": [-75.17, 39.95],
+                "San Antonio": [-98.49, 29.42],
+                "San Diego": [-117.16, 32.71],
+            }
+
+            coords = city_coords.get(city, [-98.58, 39.83])  # Default to center of USA
+
+            location_dict = {
+                "facility": facility,
+                "city": city,
+                "state": state,
+                "country": country,
+                "geo": {
+                    "type": "Point",
+                    "coordinates": coords
+                }
+            }
+            locations.append(location_dict)
+
+        return locations
+
+    def parse_trials(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Parse and transform trial data to match ClinicalTrial model schema
+
+        Args:
+            data: Raw API response from ClinicalTrials.gov
+
+        Returns:
+            List of trial records in model-expected format
+        """
+        trials = []
+        studies = data.get("studies", [])
+
+        for study in studies:
+            try:
+                protocol_section = study.get("protocolSection", {})
+                identification_module = protocol_section.get("identificationModule", {})
+                status_module = protocol_section.get("statusModule", {})
+                contacts_locations_module = protocol_section.get("contactsLocationsModule", {})
+                conditions_module = protocol_section.get("conditionsModule", {})
+                interventions_module = protocol_section.get("interventionsModule", {})
+                sponsor_module = protocol_section.get("sponsorCollaboratorsModule", {})
+
+                nct_id = identification_module.get("nctId")
+                title = identification_module.get("officialTitle", "")
+                brief_title = identification_module.get("briefTitle", "")
+
+                if not nct_id or not title:
+                    continue
+
+                api_status = status_module.get("overallStatus", "Not yet recruiting")
+                status = self._normalize_status(api_status)
+
+                phases = status_module.get("phases", [])
+                phase = phases[0] if phases else None
+
+                start_date = self._parse_date(
+                    status_module.get("startDateStruct", {}).get("date")
+                )
+                completion_date = self._parse_date(
+                    status_module.get("completionDateStruct", {}).get("date")
+                )
+
+                eligibility = self._get_eligibility(protocol_section)
+
+                locations = self._get_locations_with_geo(contacts_locations_module)
+
+                trial = {
+                    "nct_id": nct_id,
+                    "title": title,
+                    "brief_title": brief_title,
+                    "phase": phase,
+                    "status": status,
+                    "eligibility": eligibility,
+                    "locations": locations,
+                    "start_date": start_date,
+                    "completion_date": completion_date,
+                    "conditions": conditions_module.get("conditions", []),
+                    "keywords": conditions_module.get("keywords", []),
+                    "interventions": [
+                        {
+                            "name": i.get("name"),
+                            "type": i.get("type"),
+                            "description": i.get("description")
+                        }
+                        for i in interventions_module.get("interventions", [])
+                    ],
+                    "enrollment": status_module.get("enrollmentInfo", {}).get("count"),
+                    "sponsor": sponsor_module.get("leadSponsor", {}).get("name"),
+                    "embedding": [],  # Will be populated by API during insertion
+                }
+                trials.append(trial)
+            except Exception as e:
+                print(f"Error parsing trial {identification_module.get('nctId', 'unknown')}: {e}")
+                continue
+
+        return trials
+
+    def save_to_json(self, data: List[Dict[str, Any]], filename: str = "trials.json"):
+        """Save trials to JSON file"""
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            print(f"Saved {len(data)} trials to {filename}")
+        except Exception as e:
+            print(f"Error saving to JSON: {e}")
+
+    def filter_trials_locally(
+        self,
+        trials: List[Dict[str, Any]],
+        condition: Optional[str] = None,
+        status: Optional[str] = None,
+        country: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter trials locally (after fetching all data)
+
+        Args:
+            trials: List of trial records
+            condition: Filter by condition (substring match)
+            status: Filter by status (exact match)
+            country: Filter by country (exact match)
+
+        Returns:
+            Filtered list of trials
+        """
+        filtered = trials
+
+        if condition:
+            condition_lower = condition.lower()
+            filtered = [
+                t for t in filtered
+                if any(condition_lower in c.lower() for c in t.get("conditions", []))
+            ]
+
+        if status:
+            filtered = [t for t in filtered if t.get("status") == status.upper()]
+
+        if country:
+            filtered = [
+                t for t in filtered
+                if any(loc.get("country") == country for loc in t.get("locations", []))
+            ]
+
+        return filtered
+
+
+# === src\scrapper\init_database.py ===
+"""
+Initialize MongoDB database with collections and indexes
+"""
+
+import sys
+from pathlib import Path
+from pymongo import MongoClient, GEOSPHERE
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from app.config import Config
+
+
+def create_collections_and_indexes():
+    """Create collections and indexes"""
+    print("Initializing MongoDB database...")
+
+    try:
+        client = MongoClient(Config.MONGODB_URL, serverSelectionTimeoutMS=10000)
+        db = client[Config.DATABASE_NAME]
+
+        client.admin.command('ping')
+        print(f"✓ Connected to MongoDB: {Config.DATABASE_NAME}\n")
+
+        print("Setting up patients collection...")
+        db.patients.create_index("display_id", unique=True)
+        db.patients.create_index([("demographics.location", GEOSPHERE)])
+        db.patients.create_index("conditions.name")
+        print("✓ Patients collection ready")
+
+        print("Setting up clinical_trials collection...")
+        db.clinical_trials.create_index("nct_id", unique=True)
+        db.clinical_trials.create_index([("locations.geo", GEOSPHERE)])
+        db.clinical_trials.create_index("conditions")
+        db.clinical_trials.create_index("status")
+        print("✓ Clinical trials collection ready")
+
+        print("Setting up match_results collection...")
+        db.match_results.create_index("patient_id")
+        db.match_results.create_index("nct_id")
+        db.match_results.create_index(
+            [("patient_id", 1), ("nct_id", 1)],
+            unique=True
+        )
+        print("✓ Match results collection ready")
+
+        print("Setting up users collection...")
+        db.users.create_index("email", unique=True)
+        print("✓ Users collection ready")
+
+        print("Setting up audit_logs collection...")
+        db.audit_logs.create_index("timestamp")
+        db.audit_logs.create_index("event_type")
+        db.audit_logs.create_index("patient_id")
+        print("✓ Audit logs collection ready")
+
+        print("\n" + "=" * 60)
+        print("Database initialization complete!")
+        print("=" * 60)
+        print("\nCollections created:")
+        for collection in db.list_collection_names():
+            count = db[collection].count_documents({})
+            print(f"  - {collection} ({count} documents)")
+
+        client.close()
+        return True
+
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+if __name__ == "__main__":
+    success = create_collections_and_indexes()
+    sys.exit(0 if success else 1)
+
+
+# === src\scrapper\populate_database.py ===
+"""
+Script to populate MongoDB with sample data in the correct schema format
+"""
+
+import sys
+from pathlib import Path
+from datetime import datetime, timedelta
+import random
+import bcrypt
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from app.config import Config
+from pymongo import MongoClient, GEOSPHERE
+from pymongo.errors import PyMongoError
+
+
+def hash_password(password: str) -> str:
+    """Hash password using bcrypt"""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+def create_indexes(db):
+    """Create database indexes"""
+    print("Creating database indexes...")
+
+    try:
+        db.patients.create_index("display_id", unique=True)
+        db.patients.create_index([("demographics.location", GEOSPHERE)])
+        db.patients.create_index("conditions.name")
+
+        db.clinical_trials.create_index("nct_id", unique=True)
+        db.clinical_trials.create_index([("locations.geo", GEOSPHERE)])
+        db.clinical_trials.create_index("conditions")
+        db.clinical_trials.create_index("status")
+
+        db.match_results.create_index("patient_id")
+        db.match_results.create_index("nct_id")
+        db.match_results.create_index([("patient_id", 1), ("nct_id", 1)], unique=True)
+
+        db.users.create_index("email", unique=True)
+
+        db.audit_logs.create_index("timestamp")
+        db.audit_logs.create_index("event_type")
+        db.audit_logs.create_index("patient_id")
+
+        print("✓ All indexes created successfully")
+    except Exception as e:
+        print(f"Error creating indexes: {e}")
+
+
+def populate_users(db):
+    """Create sample users"""
+    print("\nPopulating users...")
+
+    db.users.delete_many({})
+
+    users = [
+        {
+            "email": "dr.senku@cityhospital.com",
+            "password_hash": hash_password("SecurePass123!"),
+            "full_name": "Dr. Senku Stone",
+            "role": "CLINICIAN",
+            "organization": "City Hospital",
+            "is_active": True,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        },
+        {
+            "email": "dr.emma@ucsf.edu",
+            "password_hash": hash_password("SecurePass123!"),
+            "full_name": "Dr. Emma Watson",
+            "role": "RESEARCHER",
+            "organization": "UCSF Medical Center",
+            "is_active": True,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        },
+        {
+            "email": "admin@trials.com",
+            "password_hash": hash_password("SecurePass123!"),
+            "full_name": "Administrator",
+            "role": "ADMIN",
+            "organization": "Trial Match Inc",
+            "is_active": True,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        },
+        {
+            "email": "auditor@trials.com",
+            "password_hash": hash_password("SecurePass123!"),
+            "full_name": "Compliance Auditor",
+            "role": "AUDITOR",
+            "organization": "Trial Match Inc",
+            "is_active": True,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+    ]
+
+    result = db.users.insert_many(users)
+    print(f"✓ Created {len(result.inserted_ids)} users")
+    return result.inserted_ids
+
+
+def populate_patients(db, user_ids):
+    """Create sample patients"""
+    print("\nPopulating patients...")
+
+    db.patients.delete_many({})
+
+    conditions_db = [
+        {"name": "Type 2 Diabetes", "icd10": "E11.9"},
+        {"name": "Hypertension", "icd10": "I10"},
+        {"name": "Cancer", "icd10": "C80"},
+        {"name": "Heart Disease", "icd10": "I25.9"},
+        {"name": "COPD", "icd10": "J44.9"},
+    ]
+
+    medications_db = [
+        {"name": "Metformin", "dosage": "500mg"},
+        {"name": "Lisinopril", "dosage": "10mg"},
+        {"name": "Aspirin", "dosage": "81mg"},
+        {"name": "Atorvastatin", "dosage": "20mg"},
+        {"name": "Albuterol", "dosage": "90mcg"},
+    ]
+
+    cities = [
+        {"city": "San Francisco", "coords": [-122.41, 37.77]},
+        {"city": "New York", "coords": [-74.00, 40.71]},
+        {"city": "Los Angeles", "coords": [-118.24, 34.05]},
+        {"city": "Boston", "coords": [-71.06, 42.36]},
+        {"city": "Chicago", "coords": [-87.62, 41.88]},
+    ]
+
+    patients = []
+    for i in range(1, 11):  # 10 patients
+        patient_conds = random.sample(conditions_db, k=random.randint(1, 2))
+        patient_meds = random.sample(medications_db, k=random.randint(1, 3))
+
+        city = random.choice(cities)
+
+        patient = {
+            "display_id": f"PT-{i:04d}",
+            "demographics": {
+                "age": random.randint(25, 80),
+                "gender": random.choice(["male", "female", "other"]),
+                "location": {
+                    "type": "Point",
+                    "coordinates": city["coords"]
+                }
+            },
+            "conditions": [
+                {
+                    "name": c["name"],
+                    "icd10": c["icd10"],
+                    "onset": datetime.utcnow() - timedelta(days=random.randint(30, 1000))
+                }
+                for c in patient_conds
+            ],
+            "medications": [
+                {
+                    "name": m["name"],
+                    "dosage": m["dosage"],
+                    "status": random.choice(["active", "inactive", "discontinued"])
+                }
+                for m in patient_meds
+            ],
+            "lab_values": [
+                {
+                    "name": "HbA1c",
+                    "value": round(random.uniform(6.0, 10.0), 1),
+                    "unit": "%",
+                    "date": datetime.utcnow() - timedelta(days=random.randint(1, 60))
+                },
+                {
+                    "name": "Blood Pressure",
+                    "value": random.randint(110, 160),
+                    "unit": "mmHg",
+                    "date": datetime.utcnow() - timedelta(days=random.randint(1, 30))
+                },
+                {
+                    "name": "Glucose",
+                    "value": round(random.uniform(80, 250), 1),
+                    "unit": "mg/dL",
+                    "date": datetime.utcnow() - timedelta(days=random.randint(1, 30))
+                }
+            ],
+            "clinical_notes_text": f"Patient presents with {patient_conds[0]['name']}. Currently on multiple medications.",
+            "embedding": [round(random.uniform(-1, 1), 3) for _ in range(50)],
+            "created_at": datetime.utcnow() - timedelta(days=random.randint(1, 365)),
+            "updated_at": datetime.utcnow()
+        }
+        patients.append(patient)
+
+    result = db.patients.insert_many(patients)
+    print(f"✓ Created {len(result.inserted_ids)} patients")
+    return result.inserted_ids
+
+
+def populate_trials(db):
+    """Create sample clinical trials"""
+    print("\nPopulating clinical trials...")
+
+    db.clinical_trials.delete_many({})
+
+    trial_data = [
+        {
+            "nct_id": "NCT04582292",
+            "title": "HARMONY OUTCOMES Extension Study for Alogliptin",
+            "brief_title": "HARMONY Trial Extension",
+            "phase": "Phase 3",
+            "status": "RECRUITING",
+            "conditions": ["Type 2 Diabetes Mellitus"],
+        },
+        {
+            "nct_id": "NCT04603599",
+            "title": "A Study of Dapagliflozin (Farxiga) in Participants With Heart Failure",
+            "brief_title": "DELIVER Trial",
+            "phase": "Phase 3",
+            "status": "RECRUITING",
+            "conditions": ["Heart Failure", "Diabetes"],
+        },
+        {
+            "nct_id": "NCT04233996",
+            "title": "Trial of Inactivated COVID-19 Vaccine",
+            "brief_title": "COVID-19 Vaccine Trial",
+            "phase": "Phase 3",
+            "status": "COMPLETED",
+            "conditions": ["COVID-19"],
+        },
+        {
+            "nct_id": "NCT02994108",
+            "title": "SUSTAIN 6 Trial: Semaglutide vs Insulin Glargine in Type 2 Diabetes",
+            "brief_title": "SUSTAIN 6 Study",
+            "phase": "Phase 3",
+            "status": "COMPLETED",
+            "conditions": ["Type 2 Diabetes Mellitus"],
+        },
+        {
+            "nct_id": "NCT04382989",
+            "title": "A Study of Remdesivir in Hospitalized Participants With Moderate COVID-19",
+            "brief_title": "SIMPLE-Moderate",
+            "phase": "Phase 3",
+            "status": "COMPLETED",
+            "conditions": ["COVID-19"],
+        },
+    ]
+
+    locations_data = [
+        {"city": "San Francisco", "state": "CA", "coords": [-122.45, 37.76]},
+        {"city": "New York", "state": "NY", "coords": [-73.97, 40.78]},
+        {"city": "Los Angeles", "state": "CA", "coords": [-118.24, 34.05]},
+        {"city": "Boston", "state": "MA", "coords": [-71.06, 42.36]},
+        {"city": "Chicago", "state": "IL", "coords": [-87.62, 41.88]},
+    ]
+
+    trials = []
+    for trial in trial_data:
+        locs = random.sample(locations_data, k=random.randint(1, 3))
+
+        trial_doc = {
+            "nct_id": trial["nct_id"],
+            "title": trial["title"],
+            "brief_title": trial["brief_title"],
+            "phase": trial["phase"],
+            "status": trial["status"],
+            "eligibility": {
+                "min_age": 18,
+                "max_age": random.choice([65, 75, 85, None]),
+                "gender": random.choice(["ALL", "MALE", "FEMALE"]),
+                "raw_text": f"Inclusion: Age 18+, {trial['conditions'][0]}. Exclusion: Pregnancy"
+            },
+            "locations": [
+                {
+                    "facility": f"{loc['city']} Medical Center",
+                    "city": loc["city"],
+                    "state": loc["state"],
+                    "country": "United States",
+                    "geo": {
+                        "type": "Point",
+                        "coordinates": loc["coords"]
+                    }
+                }
+                for loc in locs
+            ],
+            "start_date": datetime.utcnow() - timedelta(days=random.randint(30, 600)),
+            "completion_date": datetime.utcnow() + timedelta(days=random.randint(30, 600)),
+            "conditions": trial["conditions"],
+            "keywords": trial["conditions"] + ["treatment"],
+            "interventions": [
+                {
+                    "name": f"Drug for {trial['conditions'][0]}",
+                    "type": "Drug",
+                    "description": f"Treatment for {trial['conditions'][0]}"
+                }
+            ],
+            "enrollment": random.randint(100, 5000),
+            "sponsor": random.choice(["Eli Lilly", "Novo Nordisk", "Pfizer", "AstraZeneca", "NIH"]),
+            "embedding": [round(random.uniform(-1, 1), 3) for _ in range(50)],
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        trials.append(trial_doc)
+
+    result = db.clinical_trials.insert_many(trials)
+    print(f"✓ Created {len(result.inserted_ids)} clinical trials")
+    return result.inserted_ids
+
+
+def populate_match_results(db, patient_ids, trial_ids):
+    """Create sample match results"""
+    print("\nPopulating match results...")
+
+    db.match_results.delete_many({})
+
+    match_results = []
+    for patient_id in patient_ids[:5]:
+        for trial_id in random.sample(trial_ids, k=random.randint(1, 3)):
+            trial = db.clinical_trials.find_one({"_id": trial_id})
+            patient = db.patients.find_one({"_id": patient_id})
+
+            if not trial or not patient:
+                continue
+
+            status = random.choice(["ELIGIBLE", "INELIGIBLE", "REVIEW_NEEDED"])
+            confidence = random.uniform(0.5, 0.99) if status == "ELIGIBLE" else random.uniform(0.2, 0.7)
+
+            match = {
+                "patient_id": str(patient_id),
+                "nct_id": trial["nct_id"],
+                "run_date": datetime.utcnow(),
+                "status": status,
+                "confidence_score": round(confidence, 2),
+                "analysis": {
+                    "summary": f"Patient age {patient['demographics']['age']} for {trial['conditions'][0]}",
+                    "criteria_met": [
+                        f"Age ({patient['demographics']['age']} within criteria)",
+                        f"Condition ({trial['conditions'][0]})"
+                    ],
+                    "criteria_failed": [] if status == "ELIGIBLE" else ["Additional review"],
+                    "warnings": ["Verify medications"] if status != "INELIGIBLE" else []
+                },
+                "distance_km": round(random.uniform(1, 100), 1),
+                "created_at": datetime.utcnow()
+            }
+            match_results.append(match)
+
+    if match_results:
+        result = db.match_results.insert_many(match_results)
+        print(f"✓ Created {len(result.inserted_ids)} match results")
+    else:
+        print("✓ No match results created")
+
+
+def populate_audit_logs(db, patient_ids, user_ids):
+    """Create sample audit logs"""
+    print("\nPopulating audit logs...")
+
+    db.audit_logs.delete_many({})
+
+    audit_logs = []
+    for i in range(20):
+        log = {
+            "timestamp": datetime.utcnow() - timedelta(days=random.randint(0, 30)),
+            "event_type": random.choice(["MATCH_GENERATED", "PII_REDACTED", "BIAS_CHECK", "DATA_ACCESSED"]),
+            "patient_id": str(random.choice(patient_ids)) if random.random() > 0.3 else None,
+            "user_id": str(random.choice(user_ids)),
+            "details": {
+                "action": "Database operation",
+                "bias_check_passed": random.choice([True, False]),
+                "confidence_score": round(random.uniform(0.5, 0.99), 2)
+            },
+            "action_by": "System",
+            "created_at": datetime.utcnow()
+        }
+        audit_logs.append(log)
+
+    result = db.audit_logs.insert_many(audit_logs)
+    print(f"✓ Created {len(result.inserted_ids)} audit logs")
+
+
+def main():
+    """Main populate function"""
+    print("=" * 60)
+    print("Database Population Script")
+    print("=" * 60)
+
+    try:
+        client = MongoClient(Config.MONGODB_URL, serverSelectionTimeoutMS=5000)
+        db = client[Config.DATABASE_NAME]
+
+        client.admin.command('ping')
+        print(f"\n✓ Connected to MongoDB: {Config.DATABASE_NAME}")
+
+        create_indexes(db)
+
+        user_ids = populate_users(db)
+        patient_ids = populate_patients(db, user_ids)
+        trial_ids = populate_trials(db)
+        populate_match_results(db, patient_ids, trial_ids)
+        populate_audit_logs(db, patient_ids, user_ids)
+
+        print("\n" + "=" * 60)
+        print("Database Statistics")
+        print("=" * 60)
+        print(f"Users: {db.users.count_documents({})}")
+        print(f"Patients: {db.patients.count_documents({})}")
+        print(f"Clinical Trials: {db.clinical_trials.count_documents({})}")
+        print(f"Match Results: {db.match_results.count_documents({})}")
+        print(f"Audit Logs: {db.audit_logs.count_documents({})}")
+
+        client.close()
+        print("\n✓ Database population complete!")
+        print("=" * 60)
+
+    except Exception as e:
+        print(f"\n✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    main()
+
+
+# === src\scrapper\sync.py ===
+from ..app.core.database import Database
+from .fetch_clinical_trials import ClinicalTrialsFetcher
+from ..app.services.semantic_search import SemanticSearchService
+
+def sync_trials_to_db():
+    db = Database()
+    fetcher = ClinicalTrialsFetcher()
+    semantic = SemanticSearchService() # Optional: generate embeddings on ingest
+    
+    print("Fetching trials...")
+    raw_data = fetcher.fetch_trials_paginated(limit=100, max_pages=2)
+    parsed_trials = fetcher.parse_trials(raw_data)
+    
+    for trial in parsed_trials:
+        trial["embedding"] = semantic.generate_trial_embedding(trial).tolist()
+        
+        db.trials.update_one(
+            {"nct_id": trial["nct_id"]},
+            {"$set": trial},
+            upsert=True
+        )
+    print(f"Successfully synced {len(parsed_trials)} trials.")
+

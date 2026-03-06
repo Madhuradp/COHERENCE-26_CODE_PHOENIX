@@ -1,10 +1,11 @@
 
 from pydantic import Field, EmailStr, BaseModel
 from datetime import datetime
+from enum import Enum
 from .base import BaseDocument
 
 
-class UserRole(str):
+class UserRole(str, Enum):
     """User roles"""
     CLINICIAN = "CLINICIAN"
     RESEARCHER = "RESEARCHER"

@@ -4,7 +4,15 @@ pymongo
 python-dotenv
 openai
 pydantic
+pydantic[email]
 requests
 geopy
 pandas
 tiktoken
+presidio-analyzer
+presidio-anonymizer
+sentence-transformers
+torch
+PyJWT
+passlib[bcrypt]
+python-multipart
