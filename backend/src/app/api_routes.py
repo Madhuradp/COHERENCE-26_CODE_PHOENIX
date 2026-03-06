@@ -10,7 +10,7 @@ from pathlib import Path
 # Add scripts to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scripts.fetch_clinical_trials import ClinicalTrialsFetcher
+from scrapper.fetch_clinical_trials import ClinicalTrialsFetcher
 
 router = APIRouter(prefix="/api/trials", tags=["clinical-trials"])
 fetcher = ClinicalTrialsFetcher()

@@ -57,8 +57,12 @@ def main():
     with OUTPUT_PATH.open('w', encoding='utf-8') as out_f:
         for fpath in sorted(files):
             out_f.write(f"# === {fpath.relative_to(SRC_ROOT.parent)} ===\n")
-            text = fpath.read_text(encoding='utf-8')
-            out_f.write(text)
+            # read file and skip comment lines
+            for line in fpath.read_text(encoding='utf-8').splitlines(keepends=True):
+                stripped = line.lstrip()
+                if stripped.startswith("#"):
+                    continue
+                out_f.write(line)
             out_f.write("\n\n")
 
     print("Done.")

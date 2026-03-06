@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.db_integration import TrialsDB
-from scripts.fetch_clinical_trials import ClinicalTrialsFetcher
+from scrapper.fetch_clinical_trials import ClinicalTrialsFetcher
 
 
 def main():
