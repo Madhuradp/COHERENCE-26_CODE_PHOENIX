@@ -15,20 +15,21 @@ router = APIRouter(prefix="/api/patients", tags=["Patients"])
 
 @router.post("/upload", response_model=ResponseModel)
 async def upload_patient(raw_patient: dict):
+    """Upload single patient record"""
     db = Database()
     privacy = PrivacyManager()
     semantic = SemanticSearchService()
-    
+
     # 1. Redact PII before it even touches the DB
     redacted_data, pii_summary = privacy.redact_for_storage(raw_patient, data_type="patient")
-    
+
     # 2. Generate Semantic Embedding for matching
     redacted_data["embedding"] = semantic.generate_patient_embedding(redacted_data).tolist()
-    
+
     # 3. Save to MongoDB
     result = db.patients.insert_one(redacted_data)
     patient_id = str(result.inserted_id)
-    
+
     # 4. Create Audit Log for Privacy Compliance
     audit_log = privacy.create_audit_log(
         document_type="patient",
@@ -36,11 +37,102 @@ async def upload_patient(raw_patient: dict):
         pii_summary=pii_summary
     )
     db.audit.insert_one(audit_log)
-    
+
     return {
-        "success": True, 
+        "success": True,
         "data": {"id": patient_id, "pii_redacted": pii_summary["total_entities"]},
         "message": "Patient ingested and redacted successfully"
+    }
+
+
+@router.post("/bulk-upload", response_model=ResponseModel)
+async def bulk_upload_patients(patients: List[dict]):
+    """
+    Bulk upload multiple patient records efficiently.
+
+    Request body:
+    [
+        { patient1_data },
+        { patient2_data },
+        { patient3_data },
+        ...
+    ]
+
+    Returns: List of patient IDs and statistics
+    """
+    db = Database()
+    privacy = PrivacyManager()
+    semantic = SemanticSearchService()
+
+    if not patients or len(patients) == 0:
+        raise HTTPException(status_code=400, detail="No patients provided")
+
+    if len(patients) > 1000:
+        raise HTTPException(status_code=400, detail="Maximum 1000 patients per request")
+
+    results = {
+        "success_count": 0,
+        "failed_count": 0,
+        "patient_ids": [],
+        "errors": [],
+        "total_pii_entities": 0
+    }
+
+    # Batch process patients
+    documents_to_insert = []
+    audit_logs_to_insert = []
+
+    for idx, raw_patient in enumerate(patients):
+        try:
+            # 1. Redact PII
+            redacted_data, pii_summary = privacy.redact_for_storage(raw_patient, data_type="patient")
+
+            # 2. Generate embedding
+            redacted_data["embedding"] = semantic.generate_patient_embedding(redacted_data).tolist()
+
+            # Store for batch insert (with temp ID for audit log reference)
+            temp_id = f"temp_{idx}"
+            redacted_data["_temp_id"] = temp_id
+            documents_to_insert.append(redacted_data)
+
+            # Prepare audit log
+            audit_log = privacy.create_audit_log(
+                document_type="patient",
+                document_id=temp_id,
+                pii_summary=pii_summary
+            )
+            audit_logs_to_insert.append(audit_log)
+
+            results["total_pii_entities"] += pii_summary.get("total_entities", 0)
+
+        except Exception as e:
+            results["failed_count"] += 1
+            results["errors"].append({
+                "patient_index": idx,
+                "error": str(e)
+            })
+
+    # Batch insert to MongoDB
+    if documents_to_insert:
+        try:
+            insert_result = db.patients.insert_many(documents_to_insert)
+            results["success_count"] = len(insert_result.inserted_ids)
+            results["patient_ids"] = [str(pid) for pid in insert_result.inserted_ids]
+
+            # Update audit logs with real patient IDs
+            for audit_log, patient_id in zip(audit_logs_to_insert, results["patient_ids"]):
+                audit_log["document_id"] = patient_id
+
+            # Batch insert audit logs
+            db.audit.insert_many(audit_logs_to_insert)
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database insertion failed: {str(e)}")
+
+    return {
+        "success": True,
+        "data": results,
+        "message": f"Bulk upload complete: {results['success_count']} succeeded, {results['failed_count']} failed"
     }
 
 @router.get("/", response_model=ResponseModel)
