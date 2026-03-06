@@ -14,17 +14,11 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { authRegister } from "@/lib/api";
 
-const patientSignupSchema = z
-  .object({
-    name: z.string().min(2, "Full name is required"),
-    email: z.string().email("Please enter a valid email"),
-    password: z.string().min(8, "Password must be at least 8 characters"),
-    confirmPassword: z.string().min(1, "Please confirm your password"),
-  })
-  .refine((d) => d.password === d.confirmPassword, {
-    message: "Passwords do not match",
-    path: ["confirmPassword"],
-  });
+const patientSignupSchema = z.object({
+  name: z.string().min(2, "Full name is required"),
+  email: z.string().email("Please enter a valid email"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
 
 type PatientSignupForm = z.infer<typeof patientSignupSchema>;
 
@@ -38,7 +32,6 @@ const perks = [
 export default function PatientSignupPage() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -171,17 +164,6 @@ export default function PatientSignupPage() {
                 error={errors.password?.message}
                 {...register("password")}
               />
-              <Input
-                label="Confirm Password"
-                type={showConfirm ? "text" : "password"}
-                placeholder="Repeat your password"
-                leftIcon={<Lock size={15} />}
-                rightIcon={showConfirm ? <EyeOff size={15} /> : <Eye size={15} />}
-                onRightIconClick={() => setShowConfirm(!showConfirm)}
-                error={errors.confirmPassword?.message}
-                {...register("confirmPassword")}
-              />
-
               <p className="text-xs text-text-muted leading-relaxed">
                 By creating an account you agree to our{" "}
                 <a href="#" className="text-brand-purple hover:underline">
