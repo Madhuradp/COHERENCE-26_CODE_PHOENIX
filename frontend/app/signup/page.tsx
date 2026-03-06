@@ -21,7 +21,6 @@ const doctorSchema = z.object({
   name: z.string().min(2, "Name is required"),
   degree: z.string().min(2, "Medical degree is required"),
   hospital: z.string().min(2, "Hospital / Clinic name is required"),
-  licenseNumber: z.string().min(3, "License number is required"),
   email: z.string().email("Invalid email"),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
@@ -40,7 +39,6 @@ const researcherSchema = z.object({
   name: z.string().min(2, "Name is required"),
   institution: z.string().min(2, "Institution is required"),
   researchField: z.string().min(2, "Research field is required"),
-  ethicsApprovalId: z.string().optional(),
   email: z.string().email("Invalid email"),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
@@ -109,7 +107,6 @@ function DoctorSignupForm({ onBack }: { onBack: () => void }) {
         <Input label="Medical Degree" placeholder="MBBS, MD" error={errors.degree?.message} {...register("degree")} />
       </div>
       <Input label="Hospital / Clinic Name" placeholder="AIIMS New Delhi" leftIcon={<Building2 size={15} />} error={errors.hospital?.message} {...register("hospital")} />
-      <Input label="Medical License Number" placeholder="MCI-2024-XXXXX" error={errors.licenseNumber?.message} {...register("licenseNumber")} />
       <Input label="Email address" type="email" placeholder="doctor@hospital.com" leftIcon={<Mail size={15} />} error={errors.email?.message} {...register("email")} />
       <Input label="Password" type={showPassword ? "text" : "password"} placeholder="Min. 8 characters" leftIcon={<Lock size={15} />} rightIcon={showPassword ? <EyeOff size={15} /> : <Eye size={15} />} onRightIconClick={() => setShowPassword(!showPassword)} error={errors.password?.message} {...register("password")} />
       <div className="flex gap-3 mt-1">
@@ -197,10 +194,7 @@ function ResearcherSignupForm({ onBack }: { onBack: () => void }) {
       <input type="hidden" {...register("role")} />
       <Input label="Full Name" placeholder="Dr. Priya Sharma" leftIcon={<User size={15} />} error={errors.name?.message} {...register("name")} />
       <Input label="Institution / University" placeholder="IIT Bombay / TIFR" leftIcon={<Building2 size={15} />} error={errors.institution?.message} {...register("institution")} />
-      <div className="grid grid-cols-2 gap-4">
-        <Input label="Research Field" placeholder="Oncology, Cardiology..." error={errors.researchField?.message} {...register("researchField")} />
-        <Input label="Ethics Approval ID" placeholder="Optional" hint="If available" {...register("ethicsApprovalId")} />
-      </div>
+      <Input label="Research Field" placeholder="Oncology, Cardiology..." error={errors.researchField?.message} {...register("researchField")} />
       <Input label="Email address" type="email" placeholder="researcher@institution.edu" leftIcon={<Mail size={15} />} error={errors.email?.message} {...register("email")} />
       <Input label="Password" type={showPassword ? "text" : "password"} placeholder="Min. 8 characters" leftIcon={<Lock size={15} />} rightIcon={showPassword ? <EyeOff size={15} /> : <Eye size={15} />} onRightIconClick={() => setShowPassword(!showPassword)} error={errors.password?.message} {...register("password")} />
       <div className="flex gap-3 mt-1">
