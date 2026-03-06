@@ -27,7 +27,13 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "Intelligent Matcher Online", "version": "2.0"}
 
+    # OpenAPI schema at /api/openapi.json (alias for /openapi.json)
+    @app.get("/api/openapi.json")
+    async def get_openapi():
+        return app.openapi()
+
     return app
+
 
 # Create app instance for ASGI servers (uvicorn, gunicorn)
 app = create_app()

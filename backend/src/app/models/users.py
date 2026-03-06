@@ -2,24 +2,26 @@
 from pydantic import Field, EmailStr, BaseModel
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 from .base import BaseDocument
 
 
 class UserRole(str, Enum):
     """User roles"""
-    CLINICIAN = "CLINICIAN"
-    RESEARCHER = "RESEARCHER"
-    ADMIN = "ADMIN"
     AUDITOR = "AUDITOR"
+    PATIENT = "PATIENT"
+    DOCTOR = "DOCTOR"
+    RESEARCHER = "RESEARCHER"
+    PHARMACIST = "PHARMACIST"
 
 
 class User(BaseDocument):
     """User document"""
     email: EmailStr = Field(..., description="Email (used for login)")
-    password_hash: str = Field(..., description="Bcrypt password hash (NEVER store plain text)")
+    password_hash: str = Field(..., description="Password (plain text)")
     full_name: str = Field(..., description="Full name")
     role: str = Field(..., description="User role (CLINICIAN, RESEARCHER, ADMIN, AUDITOR)")
-    organization: str = Field(..., description="Organization name")
+    organization: Optional[str] = Field(None, description="Organization name (optional)")
     is_active: bool = Field(default=True, description="Is user active")
 
     class Config:
@@ -29,7 +31,6 @@ class User(BaseDocument):
                 "password_hash": "$2b$12$LQv3c1yq...",
                 "full_name": "Dr. Senku Stone",
                 "role": "CLINICIAN",
-                "organization": "City Hospital",
                 "is_active": True
             }
         }
@@ -40,13 +41,12 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=8, description="Password (8+ chars)")
     full_name: str
     role: UserRole
-    organization: str
+
 
 class UserResponse(BaseModel):
     """User response (no password hash)"""
     email: str
     full_name: str
     role: UserRole
-    organization: str
     is_active: bool
     created_at: datetime

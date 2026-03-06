@@ -3,18 +3,17 @@ import jwt
 from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from .config import Config
 from .core.database import Database
 
 
-# Setup Password Hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(plain_password, stored_password):
+    """Simple password verification (plain text)"""
+    return plain_password == stored_password
 
 def create_access_token(data: dict):
     to_encode = data.copy()

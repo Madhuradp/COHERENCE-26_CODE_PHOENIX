@@ -6,17 +6,16 @@ import jwt
 from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from .config import Config
 from .core.database import Database
 
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(plain_password, stored_password):
+    """Simple password verification (plain text)"""
+    return plain_password == stored_password
 
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -104,6 +103,42 @@ class Database:
 
 def get_db():
     return Database()
+
+# === src\app\main.py ===
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.routes import matching_route, trials_route, patients_route, analytics_route, auth_route
+
+
+def create_app() -> FastAPI:
+    """Factory function to create and configure the FastAPI application."""
+    app = FastAPI(title="Trial Match Intelligence System")
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(auth_route.router)
+    app.include_router(patients_route.router)
+    app.include_router(matching_route.router)
+    app.include_router(trials_route.router)
+    app.include_router(analytics_route.router)
+
+    @app.get("/")
+    async def health():
+        return {"status": "Intelligent Matcher Online", "version": "2.0"}
+
+    @app.get("/api/openapi.json")
+    async def get_openapi():
+        return app.openapi()
+
+    return app
+
+
+app = create_app()
 
 # === src\app\models\__init__.py ===
 
@@ -624,24 +659,27 @@ class Patient(BaseDocument):
 
 from pydantic import Field, EmailStr, BaseModel
 from datetime import datetime
+from enum import Enum
+from typing import Optional
 from .base import BaseDocument
 
 
-class UserRole(str):
+class UserRole(str, Enum):
     """User roles"""
-    CLINICIAN = "CLINICIAN"
-    RESEARCHER = "RESEARCHER"
-    ADMIN = "ADMIN"
     AUDITOR = "AUDITOR"
+    PATIENT = "PATIENT"
+    DOCTOR = "DOCTOR"
+    RESEARCHER = "RESEARCHER"
+    PHARMACIST = "PHARMACIST"
 
 
 class User(BaseDocument):
     """User document"""
     email: EmailStr = Field(..., description="Email (used for login)")
-    password_hash: str = Field(..., description="Bcrypt password hash (NEVER store plain text)")
+    password_hash: str = Field(..., description="Password (plain text)")
     full_name: str = Field(..., description="Full name")
     role: str = Field(..., description="User role (CLINICIAN, RESEARCHER, ADMIN, AUDITOR)")
-    organization: str = Field(..., description="Organization name")
+    organization: Optional[str] = Field(None, description="Organization name (optional)")
     is_active: bool = Field(default=True, description="Is user active")
 
     class Config:
@@ -651,7 +689,6 @@ class User(BaseDocument):
                 "password_hash": "$2b$12$LQv3c1yq...",
                 "full_name": "Dr. Senku Stone",
                 "role": "CLINICIAN",
-                "organization": "City Hospital",
                 "is_active": True
             }
         }
@@ -662,14 +699,13 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=8, description="Password (8+ chars)")
     full_name: str
     role: UserRole
-    organization: str
+
 
 class UserResponse(BaseModel):
     """User response (no password hash)"""
     email: str
     full_name: str
     role: UserRole
-    organization: str
     is_active: bool
     created_at: datetime
 
@@ -722,17 +758,15 @@ from datetime import datetime
 from bson import ObjectId
 
 from ..auth import (
-    pwd_context,
     create_access_token,
     get_current_user,
-    oauth2_scheme
+    oauth2_scheme,
+    verify_password
 )
 from ..core.database import Database
 from ..models.users import User, UserCreate, UserResponse, UserRole
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
-
-
 
 def require_role(required_role: str):
     """Dependency to enforce specific role"""
@@ -785,14 +819,11 @@ async def register_user(user_data: UserCreate):
             detail="User with this email already exists"
         )
 
-    hashed_password = pwd_context.hash(user_data.password)
-
     user_doc = {
         "email": user_data.email,
-        "password_hash": hashed_password,
+        "password_hash": user_data.password,
         "full_name": user_data.full_name,
         "role": user_data.role,
-        "organization": user_data.organization,
         "is_active": True,
         "created_at": datetime.utcnow()
     }
@@ -818,7 +849,7 @@ async def login(credentials: LoginRequest):
             detail="Invalid email or password"
         )
 
-    if not pwd_context.verify(credentials.password, user["password_hash"]):
+    if not verify_password(credentials.password, user["password_hash"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
@@ -836,7 +867,6 @@ async def login(credentials: LoginRequest):
         email=user["email"],
         full_name=user["full_name"],
         role=user["role"],
-        organization=user["organization"],
         is_active=user["is_active"],
         created_at=user.get("created_at", datetime.utcnow())
     )
@@ -1093,7 +1123,7 @@ async def get_user_activity(
 # === src\app\routes\matching_route.py ===
 from fastapi import APIRouter, Depends
 from bson import ObjectId
-from ..services.match_service import MatchService
+from ..services.match_engine import MatchingEngine
 from ..core.database import Database
 
 router = APIRouter(prefix="/api/match", tags=["Matching"])
@@ -1101,13 +1131,13 @@ router = APIRouter(prefix="/api/match", tags=["Matching"])
 @router.post("/run/{patient_id}")
 async def run_match_pipeline(patient_id: str):
     db = Database()
-    service = MatchService()
-    
+    engine = MatchingEngine()
+
     patient = db.patients.find_one({"_id": ObjectId(patient_id)})
     if not patient:
         return {"error": "Patient not found"}
-    
-    results = service.run_full_match_pipeline(patient)
+
+    results = engine.run_full_pipeline(patient)
     
     if results:
         db.matches.insert_many(results)
@@ -1123,13 +1153,18 @@ async def get_results(patient_id: str):
     return {"success": True, "data": matches}
 
 # === src\app\routes\patients_route.py ===
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from typing import List
 from ..core.database import Database
 from ..services.privacy_manager import PrivacyManager
 from ..services.semantic_search import SemanticSearchService
+from ..services.match_engine import MatchingEngine
 from ..models.base import ResponseModel
+from ..auth import get_current_user
 from bson import ObjectId
+from pydantic import BaseModel
+from ..services.patient_service import PatientService
+
 
 router = APIRouter(prefix="/api/patients", tags=["Patients"])
 
@@ -1167,26 +1202,214 @@ async def list_patients():
         p["_id"] = str(p["_id"])
     return {"success": True, "data": patients}
 
+
+
+@router.post("/self-upload", response_model=ResponseModel)
+async def patient_upload_own_records(raw_patient: dict, current_user: dict = Depends(get_current_user)):
+    """
+    Patient uploads their own medical records.
+    Only PATIENT role can use this.
+    """
+    if current_user.get("role") != "PATIENT":
+        raise HTTPException(status_code=403, detail="Only patients can use this endpoint")
+
+    db = Database()
+    privacy = PrivacyManager()
+    semantic = SemanticSearchService()
+
+    redacted_data, pii_summary = privacy.redact_for_storage(raw_patient, data_type="patient")
+    redacted_data["patient_email"] = current_user["email"]
+
+    redacted_data["embedding"] = semantic.generate_patient_embedding(redacted_data).tolist()
+
+    result = db.patients.insert_one(redacted_data)
+    patient_id = str(result.inserted_id)
+
+    audit_log = privacy.create_audit_log(
+        document_type="patient",
+        document_id=patient_id,
+        pii_summary=pii_summary,
+        user_email=current_user["email"]
+    )
+    db.audit.insert_one(audit_log)
+
+    return {
+        "success": True,
+        "data": {"id": patient_id},
+        "message": "Your medical records uploaded successfully"
+    }
+
+
+@router.post("/find-my-matches", response_model=ResponseModel)
+async def patient_find_matches(patient_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Patient finds clinical trials they match.
+    Patient can only search their own records.
+    """
+    db = Database()
+    engine = MatchingEngine()
+
+    patient = db.patients.find_one({"_id": ObjectId(patient_id)})
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if patient.get("patient_email") != current_user["email"]:
+        raise HTTPException(status_code=403, detail="Can only view your own records")
+
+    try:
+        matches = engine.run_full_pipeline(patient)
+        return {
+            "success": True,
+            "data": matches,
+            "message": f"Found {len(matches)} matching trials"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Matching failed: {str(e)}")
+
+
+
+@router.get("/audit-logs", response_model=ResponseModel)
+async def get_audit_logs(current_user: dict = Depends(get_current_user)):
+    """
+    Auditor views audit logs (who accessed what, when).
+    No patient PII exposed.
+    """
+    if current_user.get("role") != "AUDITOR":
+        raise HTTPException(status_code=403, detail="Only auditors can access this")
+
+    db = Database()
+    logs = list(db.audit.find({}, {
+        "document_id": 1,
+        "document_type": 1,
+        "timestamp": 1,
+        "user_email": 1,
+        "event_type": 1,
+        "action": 1
+    }).sort("timestamp", -1).limit(100))
+
+    for log in logs:
+        log["_id"] = str(log["_id"])
+
+    return {
+        "success": True,
+        "data": logs,
+        "message": "Audit logs retrieved (PII redacted)"
+    }
+
+
+@router.get("/fairness-stats", response_model=ResponseModel)
+async def get_fairness_stats(current_user: dict = Depends(get_current_user)):
+    """
+    Auditor views fairness and compliance statistics.
+    Shows matching rates, demographics distribution, etc.
+    No individual patient data.
+    """
+    if current_user.get("role") != "AUDITOR":
+        raise HTTPException(status_code=403, detail="Only auditors can access this")
+
+    db = Database()
+
+    total_patients = db.patients.count_documents({})
+    total_matches = db.match_results.count_documents({}) if "match_results" in db.db.list_collection_names() else 0
+
+    redaction_logs = list(db.audit.find(
+        {"event_type": "PII_REDACTED"},
+        {"total_entities": 1, "timestamp": 1}
+    ))
+
+    total_pii_entities = sum(log.get("total_entities", 0) for log in redaction_logs)
+
+    stats = {
+        "total_patients_ingested": total_patients,
+        "total_match_results_generated": total_matches,
+        "total_pii_entities_redacted": total_pii_entities,
+        "audit_logs_count": len(redaction_logs),
+        "compliance_status": "All data properly redacted" if total_pii_entities > 0 else "No PII detected"
+    }
+
+    return {
+        "success": True,
+        "data": stats,
+        "message": "Fairness and compliance statistics"
+    }
+
 # === src\app\routes\trials_route.py ===
 from fastapi import APIRouter
 from ..core.database import Database
-from ...scrapper.fetch_clinical_trials import ClinicalTrialsFetcher
+from scrapper.fetch_clinical_trials import ClinicalTrialsFetcher
 from ..services.semantic_search import SemanticSearchService
 from ..services.criteria_extractor import CriteriaExtractor
 
 router = APIRouter(prefix="/api/trials", tags=["Trials"])
 
-@router.get("/")
-async def get_trials(condition: str = None):
+@router.get("/search")
+async def search_trials(
+    condition: str = None,
+    min_age: int = None,
+    max_age: int = None,
+    excluded_medication: str = None,
+    limit: int = 50
+):
+    """
+    Search clinical trials with flexible filtering.
+
+    Simple search: GET /api/trials/search?condition=diabetes
+    Advanced search: GET /api/trials/search?condition=diabetes&min_age=40&max_age=70&excluded_medication=warfarin
+
+    Args:
+        condition: Search by medical condition
+        min_age: Minimum patient age requirement
+        max_age: Maximum patient age requirement
+        excluded_medication: Avoid trials excluding this medication
+        limit: Max results (default 50)
+    """
     db = Database()
     query = {}
-    if condition:
-        query = {"conditions": {"$regex": condition, "$options": "i"}}
-    
-    trials = list(db.trials.find(query, {"embedding": 0}).limit(20))
+
+    if min_age is None and max_age is None and excluded_medication is None:
+        if condition:
+            query = {
+                "$or": [
+                    {"conditions": {"$regex": condition, "$options": "i"}},
+                    {"title": {"$regex": condition, "$options": "i"}},
+                    {"keywords": {"$elemMatch": {"$regex": condition, "$options": "i"}}}
+                ]
+            }
+    else:
+        query = {"structured_eligibility": {"$exists": True}}
+
+        if min_age is not None:
+            query["structured_eligibility.age.max_age"] = {"$gte": min_age}
+        if max_age is not None:
+            query["structured_eligibility.age.min_age"] = {"$lte": max_age}
+
+        if condition:
+            query["structured_eligibility.conditions"] = {
+                "$elemMatch": {
+                    "condition": {"$regex": condition, "$options": "i"},
+                    "requirement": "required"
+                }
+            }
+
+        if excluded_medication:
+            query["structured_eligibility.medications"] = {
+                "$not": {
+                    "$elemMatch": {
+                        "medication": {"$regex": excluded_medication, "$options": "i"},
+                        "requirement": "excluded"
+                    }
+                }
+            }
+
+    trials = list(db.trials.find(query, {"embedding": 0}).limit(limit))
     for t in trials:
         t["_id"] = str(t["_id"])
-    return {"success": True, "data": trials}
+
+    return {
+        "success": True,
+        "count": len(trials),
+        "data": trials
+    }
 
 @router.post("/sync")
 async def sync_trials(extract_criteria: bool = True):
@@ -1245,21 +1468,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from typing import Optional
 import jwt
-from passlib.context import CryptContext
 from ..config import Config
-from ..core.database import Database 
+from ..core.database import Database
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class AuthService:
     def __init__(self):
         self.db = Database()
 
-    def verify_password(self, plain_password, hashed_password):
-        return pwd_context.verify(plain_password, hashed_password)
+    def verify_password(self, plain_password, stored_password):
+        """Simple password verification (plain text)"""
+        return plain_password == stored_password
 
     def get_password_hash(self, password):
-        return pwd_context.hash(password)
+        """Return password as-is (no hashing)"""
+        return password
 
     def create_access_token(self, data: dict, expires_delta: Optional[timedelta] = None):
         to_encode = data.copy()
@@ -1652,95 +1875,6 @@ class MatchingEngine:
                 "run_date": datetime.utcnow()
             })
         return final_matches
-
-# === src\app\services\match_service.py ===
-import os
-import json
-from openai import OpenAI
-from datetime import datetime
-from bson import ObjectId
-from ..core.database import Database
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-class MatchingService:
-    def __init__(self):
-        self.db = Database()
-
-    def find_nearby_candidates(self, patient: dict, radius_km: int = 100):
-        """Phase 1: Hard Filter (Geo + Age + Status)"""
-        if not patient.get('demographics'):
-            return []
-
-        coords = patient['demographics']['location']['coordinates']
-        age = patient['demographics']['age']
-
-        query = {
-            "status": "RECRUITING",
-            "eligibility.min_age": {"$lte": age},
-            "$or": [
-                {"eligibility.max_age": {"$gte": age}},
-                {"eligibility.max_age": None}
-            ],
-            "locations.geo": {
-                "$near": {
-                    "$geometry": { "type": "Point", "coordinates": coords },
-                    "$maxDistance": radius_km * 1000 
-                }
-            }
-        }
-        return list(self.db.clinical_trials.find(query).limit(10))
-
-    def analyze_with_llm(self, patient: dict, trial: dict):
-        """Phase 2: AI Analysis"""
-        prompt = f"""
-        Act as a Clinical Research Coordinator.
-        
-        PATIENT:
-        - Age: {patient['demographics']['age']}
-        - Conditions: {[c['name'] for c in patient.get('conditions', [])]}
-        - Labs: {[f"{l['name']}: {l['value']}" for l in patient.get('lab_values', [])]}
-        - Notes: {patient.get('clinical_notes_text', 'N/A')}
-
-        TRIAL CRITERIA:
-        {trial['eligibility']['raw_text']}
-
-        TASK:
-        Compare strictly. Return JSON ONLY:
-        {{
-            "status": "ELIGIBLE" (or "INELIGIBLE", "REVIEW_NEEDED"),
-            "confidence": 0.0 to 1.0,
-            "summary": "1 sentence explanation",
-            "criteria_met": ["list of strings"],
-            "criteria_failed": ["list of strings"],
-            "warnings": ["list of strings"]
-        }}
-        """
-
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o", 
-                response_format={ "type": "json_object" },
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return json.loads(response.choices[0].message.content)
-        except Exception as e:
-            print(f"LLM Error: {e}")
-            return {"status": "REVIEW_NEEDED", "confidence": 0.0, "summary": "AI Error", "analysis": {}}
-
-    def save_match_result(self, patient_id, trial_id, analysis, distance):
-        record = {
-            "patient_id": str(patient_id),
-            "nct_id": trial_id,
-            "run_date": datetime.utcnow(),
-            "status": analysis.get('status', 'REVIEW_NEEDED'),
-            "confidence_score": analysis.get('confidence', 0),
-            "analysis": analysis,
-            "distance_km": distance
-        }
-        result = self.db.db.match_results.insert_one(record)
-        record['_id'] = str(result.inserted_id)
-        return record
 
 # === src\app\services\patient_service.py ===
 from bson import ObjectId
@@ -2660,40 +2794,18 @@ class TrialEmbeddingCache:
         return len(self.cache)
 
 
-# === src\app\services\services.py ===
-
-
 # === src\main.py ===
 import uvicorn
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from app.main import app
 from app.config import Config
-from app.routes import matching_route, trials_route, patients_route, analytics_route, auth_route
 
-app = FastAPI(title="Trial Match Intelligence System")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(auth_route.router)
-app.include_router(patients_route.router)
-app.include_router(matching_route.router)
-app.include_router(trials_route.router)
-app.include_router(analytics_route.router)
-
-
-@app.get("/")
-async def health():
-    return {"status": "Intelligent Matcher Online", "version": "2.0"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=Config.PORT)
-
-# === src\scrapper\__init__.py ===
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=Config.PORT,
+    )
 
 
 # === src\scrapper\fetch_clinical_trials.py ===

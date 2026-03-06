@@ -4,17 +4,15 @@ from datetime import datetime
 from bson import ObjectId
 
 from ..auth import (
-    pwd_context,
     create_access_token,
     get_current_user,
-    oauth2_scheme
+    oauth2_scheme,
+    verify_password
 )
 from ..core.database import Database
 from ..models.users import User, UserCreate, UserResponse, UserRole
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
-
-
 # ============ RBAC Dependency Factories ============
 
 def require_role(required_role: str):
@@ -70,16 +68,12 @@ async def register_user(user_data: UserCreate):
             detail="User with this email already exists"
         )
 
-    # Hash password
-    hashed_password = pwd_context.hash(user_data.password)
-
-    # Create user document
+    # Create user document (plain password - no hashing)
     user_doc = {
         "email": user_data.email,
-        "password_hash": hashed_password,
+        "password_hash": user_data.password,
         "full_name": user_data.full_name,
         "role": user_data.role,
-        "organization": user_data.organization,
         "is_active": True,
         "created_at": datetime.utcnow()
     }
@@ -107,7 +101,7 @@ async def login(credentials: LoginRequest):
         )
 
     # Verify password
-    if not pwd_context.verify(credentials.password, user["password_hash"]):
+    if not verify_password(credentials.password, user["password_hash"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
@@ -127,7 +121,6 @@ async def login(credentials: LoginRequest):
         email=user["email"],
         full_name=user["full_name"],
         role=user["role"],
-        organization=user["organization"],
         is_active=user["is_active"],
         created_at=user.get("created_at", datetime.utcnow())
     )

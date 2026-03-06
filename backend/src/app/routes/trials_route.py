@@ -6,64 +6,72 @@ from ..services.criteria_extractor import CriteriaExtractor
 
 router = APIRouter(prefix="/api/trials", tags=["Trials"])
 
-@router.get("/")
-async def get_trials(condition: str = None):
-    db = Database()
-    query = {}
-    if condition:
-        query = {"conditions": {"$regex": condition, "$options": "i"}}
-
-    trials = list(db.trials.find(query, {"embedding": 0}).limit(20))
-    for t in trials:
-        t["_id"] = str(t["_id"])
-    return {"success": True, "data": trials}
-
-
-@router.get("/search/structured")
-async def search_by_structured_criteria(
+@router.get("/search")
+async def search_trials(
+    condition: str = None,
     min_age: int = None,
     max_age: int = None,
-    condition: str = None,
-    excluded_medication: str = None
+    excluded_medication: str = None,
+    limit: int = 50
 ):
     """
-    Search trials using structured eligibility criteria.
-    More intelligent than text-based search since criteria are parsed.
+    Search clinical trials with flexible filtering.
 
-    Examples:
-    - GET /api/trials/search/structured?min_age=18&condition=diabetes
-    - GET /api/trials/search/structured?max_age=65&excluded_medication=warfarin
+    Simple search: GET /api/trials/search?condition=diabetes
+    Advanced search: GET /api/trials/search?condition=diabetes&min_age=40&max_age=70&excluded_medication=warfarin
+
+    Args:
+        condition: Search by medical condition
+        min_age: Minimum patient age requirement
+        max_age: Maximum patient age requirement
+        excluded_medication: Avoid trials excluding this medication
+        limit: Max results (default 50)
     """
     db = Database()
-    query = {"structured_eligibility": {"$exists": True}}
+    query = {}
 
-    # Age range query
-    if min_age is not None:
-        query["structured_eligibility.age.max_age"] = {"$gte": min_age}
-    if max_age is not None:
-        query["structured_eligibility.age.min_age"] = {"$lte": max_age}
-
-    # Condition search (required)
-    if condition:
-        query["structured_eligibility.conditions"] = {
-            "$elemMatch": {
-                "condition": {"$regex": condition, "$options": "i"},
-                "requirement": "required"
+    # If no structured criteria exist, fall back to basic search
+    if min_age is None and max_age is None and excluded_medication is None:
+        # Simple text search
+        if condition:
+            query = {
+                "$or": [
+                    {"conditions": {"$regex": condition, "$options": "i"}},
+                    {"title": {"$regex": condition, "$options": "i"}},
+                    {"keywords": {"$elemMatch": {"$regex": condition, "$options": "i"}}}
+                ]
             }
-        }
+    else:
+        # Advanced structured search
+        query = {"structured_eligibility": {"$exists": True}}
 
-    # Excluded medication
-    if excluded_medication:
-        query["structured_eligibility.medications"] = {
-            "$not": {
+        # Age range query
+        if min_age is not None:
+            query["structured_eligibility.age.max_age"] = {"$gte": min_age}
+        if max_age is not None:
+            query["structured_eligibility.age.min_age"] = {"$lte": max_age}
+
+        # Condition search
+        if condition:
+            query["structured_eligibility.conditions"] = {
                 "$elemMatch": {
-                    "medication": {"$regex": excluded_medication, "$options": "i"},
-                    "requirement": "excluded"
+                    "condition": {"$regex": condition, "$options": "i"},
+                    "requirement": "required"
                 }
             }
-        }
 
-    trials = list(db.trials.find(query, {"embedding": 0}).limit(50))
+        # Excluded medication
+        if excluded_medication:
+            query["structured_eligibility.medications"] = {
+                "$not": {
+                    "$elemMatch": {
+                        "medication": {"$regex": excluded_medication, "$options": "i"},
+                        "requirement": "excluded"
+                    }
+                }
+            }
+
+    trials = list(db.trials.find(query, {"embedding": 0}).limit(limit))
     for t in trials:
         t["_id"] = str(t["_id"])
 

@@ -8,11 +8,13 @@ pydantic[email]
 requests
 geopy
 pandas
+numpy
+scikit-learn
+joblib
 tiktoken
 presidio-analyzer
 presidio-anonymizer
 sentence-transformers
 torch
 PyJWT
-passlib[bcrypt]
 python-multipart

@@ -1,21 +1,21 @@
 from datetime import datetime, timedelta
 from typing import Optional
 import jwt
-from passlib.context import CryptContext
 from ..config import Config
-from ..core.database import Database 
+from ..core.database import Database
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class AuthService:
     def __init__(self):
         self.db = Database()
 
-    def verify_password(self, plain_password, hashed_password):
-        return pwd_context.verify(plain_password, hashed_password)
+    def verify_password(self, plain_password, stored_password):
+        """Simple password verification (plain text)"""
+        return plain_password == stored_password
 
     def get_password_hash(self, password):
-        return pwd_context.hash(password)
+        """Return password as-is (no hashing)"""
+        return password
 
     def create_access_token(self, data: dict, expires_delta: Optional[timedelta] = None):
         to_encode = data.copy()
