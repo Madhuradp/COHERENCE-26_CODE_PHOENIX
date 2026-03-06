@@ -67,43 +67,71 @@ export function transformPatientData(
   };
 
   // Extract conditions
-  // Support multiple formats: "disease", "condition", "diagnosis", "conditions"
-  const conditionField =
-    data["disease"] ||
-    data["condition"] ||
-    data["diagnosis"] ||
-    data["conditions"];
+  // Support multiple formats: "disease", "condition", "diagnosis", "conditions", "primary_condition", etc.
+  let conditionField = "";
+  const conditionKeys = [
+    "disease",
+    "condition",
+    "diagnosis",
+    "conditions",
+    "primary_condition",
+    "primary_diagnosis",
+    "medical_condition",
+  ];
 
-  if (conditionField) {
-    // Split by semicolon or comma if multiple conditions
+  for (const key of conditionKeys) {
+    if (data[key] && data[key].trim()) {
+      conditionField = data[key];
+      break;
+    }
+  }
+
+  if (conditionField && conditionField.trim()) {
+    // Split by semicolon, comma, pipe, or slash
     const conditions = conditionField
-      .split(/[;,]/)
+      .split(/[;,|/]/)
       .map((c) => c.trim())
-      .filter((c) => c.length > 0);
+      .filter((c) => c.length > 2); // Ignore very short strings (likely errors)
 
     patient.conditions = conditions.map((name) => ({
-      name,
+      name: capitalizeWords(name),
       icd10: undefined, // Not available from CSV
     }));
   }
 
   // Extract medications
-  // Support formats: "medications", "drugs", "medicines"
-  const medicationField =
-    data["medications"] ||
-    data["drugs"] ||
-    data["medicines"] ||
-    data["medication"];
+  // Support formats: "medications", "drugs", "medicines", "meds", "treatment", etc.
+  let medicationField = "";
+  const medicationKeys = [
+    "medications",
+    "medication",
+    "drugs",
+    "drug",
+    "medicines",
+    "medicine",
+    "meds",
+    "med",
+    "treatment",
+    "treatments",
+    "current_medications",
+  ];
 
-  if (medicationField) {
-    // Split by semicolon or comma
+  for (const key of medicationKeys) {
+    if (data[key] && data[key].trim()) {
+      medicationField = data[key];
+      break;
+    }
+  }
+
+  if (medicationField && medicationField.trim()) {
+    // Split by semicolon, comma, pipe, or slash
     const meds = medicationField
-      .split(/[;,]/)
+      .split(/[;,|/]/)
       .map((m) => m.trim())
-      .filter((m) => m.length > 0);
+      .filter((m) => m.length > 1); // Ignore single characters
 
     patient.medications = meds.map((name) => ({
-      name,
+      name: capitalizeWords(name),
       dosage: undefined,
       status: "active",
     }));
@@ -134,6 +162,16 @@ export function transformPatientData(
   });
 
   return patient;
+}
+
+/**
+ * Capitalize first letter of each word
+ */
+function capitalizeWords(str: string): string {
+  return str
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
 }
 
 /**

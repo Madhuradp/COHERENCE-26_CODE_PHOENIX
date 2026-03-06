@@ -120,11 +120,24 @@ export default function PatientsPage() {
     },
     {
       key: "conditions",
-      header: "Condition",
+      header: "Condition(s)",
       render: (_v: unknown, row: Record<string, unknown>) => {
         const conditions = row.conditions as Array<{ name: string }> | undefined;
-        const name = conditions?.[0]?.name || "—";
-        return <Badge variant="purple">{name}</Badge>;
+        if (!conditions?.length) return <span className="text-text-muted">—</span>;
+
+        const conditionNames = conditions.map((c) => c.name);
+        const displayText = conditionNames.length > 1
+          ? `${conditionNames[0]} +${conditionNames.length - 1}`
+          : conditionNames[0];
+
+        return (
+          <div className="flex flex-col gap-1">
+            <Badge variant="purple">{displayText}</Badge>
+            {conditionNames.length > 1 && (
+              <span className="text-xs text-text-muted">{conditionNames.join(", ")}</span>
+            )}
+          </div>
+        );
       },
     },
     {
@@ -132,7 +145,19 @@ export default function PatientsPage() {
       header: "Medications",
       render: (_v: unknown, row: Record<string, unknown>) => {
         const meds = row.medications as Array<{ name: string }> | undefined;
-        return <span className="text-xs">{meds?.map((m) => m.name).join(", ") || "—"}</span>;
+        if (!meds?.length) return <span className="text-text-muted">—</span>;
+
+        const medNames = meds.map((m) => m.name);
+        const displayText = medNames.slice(0, 2).join(", ") + (medNames.length > 2 ? ` +${medNames.length - 2}` : "");
+
+        return (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium">{displayText}</span>
+            {medNames.length > 2 && (
+              <span className="text-xs text-text-muted">{medNames.join(", ")}</span>
+            )}
+          </div>
+        );
       },
     },
     {
@@ -140,8 +165,22 @@ export default function PatientsPage() {
       header: "Lab Values",
       render: (_v: unknown, row: Record<string, unknown>) => {
         const labs = row.lab_values as Array<{ name: string; value: unknown; unit: string }> | undefined;
-        if (!labs?.length) return <span>—</span>;
-        return <span className="text-xs">{labs[0].name}: {String(labs[0].value)} {labs[0].unit}</span>;
+        if (!labs?.length) return <span className="text-text-muted">—</span>;
+
+        const displayText = labs.length > 1
+          ? `${labs[0].name}: ${String(labs[0].value)} ${labs[0].unit} +${labs.length - 1}`
+          : `${labs[0].name}: ${String(labs[0].value)} ${labs[0].unit}`;
+
+        return (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs">{displayText}</span>
+            {labs.length > 1 && (
+              <span className="text-xs text-text-muted">
+                {labs.map((l) => `${l.name}: ${String(l.value)} ${l.unit}`).join(" • ")}
+              </span>
+            )}
+          </div>
+        );
       },
     },
   ];

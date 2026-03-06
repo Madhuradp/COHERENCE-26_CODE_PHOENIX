@@ -1,229 +1,151 @@
-# Trial Match Intelligence System - Backend
-
-FastAPI-based backend for intelligent clinical trial matching with semantic search and LLM analysis.
+# Backend Setup & Running Guide
 
 ## Quick Start
 
-### 1. Prerequisites
-
-- Python 3.11+
-- Virtual environment activated
-- MongoDB Atlas connection
-
-### 2. Install Dependencies
-
+### 1. Install Dependencies
 ```bash
+cd backend
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment
+### 2. Run Backend Server
 
-Edit `.env` file with your settings:
-
-```env
-MONGODB_URL=mongodb+srv://user:password@cluster.mongodb.net/?appName=Database
-DATABASE_NAME=trial_match
-PORT=8000
-JWT_SECRET=your_jwt_secret_key
-OPENAI_API_KEY=your_openai_api_key_here
-```
-
-### 4. Run the Backend
-
-#### Option A: Direct Python (Recommended)
-
+**Simple command (recommended)**:
 ```bash
 cd backend
-$env:PYTHONPATH = "src"
-python src/main.py
+uvicorn src.main:app --reload
 ```
 
-#### Option B: Uvicorn with Hot Reload (Development)
+This works because `src/__init__.py` makes the src directory a proper Python package.
 
+**Output**:
+```
+INFO:     Uvicorn running on http://0.0.0.0:8000
+INFO:     Application startup complete
+```
+
+The server runs on **port 8000** by default.
+
+---
+
+## Configuration
+
+### Change Port (Optional)
+Set the `PORT` environment variable:
+
+**Windows PowerShell**:
+```powershell
+$env:PORT = "3000"
+uvicorn src.main:app --reload
+```
+
+**Linux/Mac**:
 ```bash
-cd backend
-$env:PYTHONPATH = "src"
-uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+PORT=3000 uvicorn src.main:app --reload
 ```
 
-#### Option C: Uvicorn Production
-
+### Production Deployment
 ```bash
-cd backend
-$env:PYTHONPATH = "src"
-uvicorn src.main:app --host 0.0.0.0 --port 8000
+uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
-### 5. Verify Server is Running
-
-```bash
-curl http://localhost:8000/
-```
-
-Expected response:
-```json
-{
-  "status": "Intelligent Matcher Online",
-  "version": "2.0"
-}
-```
-
-## API Documentation
-
-Once running, access interactive API docs:
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-## Architecture
-
-### 3-Tier Matching Pipeline
-
-1. **Tier 1 (Database)**: Fast geo + age filtering
-2. **Tier 2 (Semantic)**: Biomedical embeddings ranking
-3. **Tier 3 (LLM)**: Detailed clinical analysis (GPT-4)
-
-### Core Services
-
-```
-src/app/
-├── main.py                 # App factory & ASGI entry point
-├── routes/                 # API endpoint routers
-│   ├── auth_route.py      # Authentication endpoints
-│   ├── patients_route.py   # Patient management
-│   ├── matching_route.py   # Trial matching pipeline
-│   ├── trials_route.py     # Trial search & filtering
-│   └── analytics_route.py  # Analytics & reporting
-├── services/               # Business logic
-│   ├── match_engine.py     # Orchestrates 3-tier pipeline
-│   ├── semantic_search.py  # Biomedical embeddings
-│   ├── llm_service.py      # GPT-4 analysis
-│   ├── geo_service.py      # Geographic filtering
-│   ├── privacy_manager.py  # PII redaction
-│   └── auth_service.py     # JWT authentication
-├── core/
-│   ├── database.py         # MongoDB connection
-│   └── config.py           # Configuration management
-└── models/                 # Pydantic data models
-```
-
-## Key Features
-
-### Patient Matching
-
-```bash
-curl -X POST http://localhost:8000/api/match/run/{patient_id}
-```
-
-Runs full 3-tier matching pipeline for a patient.
-
-### PII Protection
-
-Automatic PII detection & redaction using Microsoft Presidio:
-- Names, emails, phone numbers
-- SSNs, medical licenses
-- Dates and identifiers
-
-### Semantic Search
-
-Uses biomedical sentence-transformers for intelligent trial ranking:
-- Domain-optimized embeddings
-- Clinical synonym understanding
-- 1-hour embedding cache
-
-### JWT Authentication
-
-Protected endpoints require Bearer token:
-
-```bash
-curl -H "Authorization: Bearer {token}" http://localhost:8000/api/match/patients
-```
+---
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MONGODB_URL` | Yes | - | MongoDB Atlas connection string |
-| `DATABASE_NAME` | No | trial_match | Database name |
-| `PORT` | No | 8000 | Server port |
-| `JWT_SECRET` | No | your_jwt_secret_key | JWT signing key |
-| `OPENAI_API_KEY` | Yes* | - | OpenAI API key (*required for LLM features) |
+Required: `.env` file in `backend/` directory
+```
+MONGODB_URL=mongodb://localhost:27017
+DATABASE_NAME=trial_match
+JWT_SECRET=your_jwt_secret_key
+PORT=8000
+DEBUG=False
+```
 
-## Dependencies
+---
 
-Key packages:
-- **FastAPI**: Web framework
-- **Uvicorn**: ASGI server
-- **PyMongo**: MongoDB driver
-- **OpenAI**: GPT-4 integration
-- **sentence-transformers**: Semantic embeddings
-- **Presidio**: PII detection/redaction
-- **PyJWT**: Authentication
+## Frontend Configuration
 
-See `requirements.txt` for full list.
+Frontend connects to backend at: `http://localhost:8000`
 
-## Troubleshooting
+This is configured in `frontend/lib/api.ts`:
+```typescript
+const BASE_URL = 'http://localhost:8000';
+```
 
-### "ModuleNotFoundError: No module named 'app'"
+---
 
-Set PYTHONPATH before running:
+## API Health Check
+
+Once running, test the backend:
 ```bash
-$env:PYTHONPATH = "src"
-python src/main.py
+curl http://localhost:8000/docs
 ```
 
-### "OPENAI_API_KEY environment variable is not set"
+This opens the interactive Swagger documentation at `http://localhost:8000/docs`
 
-Add your API key to `.env`:
-```env
-OPENAI_API_KEY=sk-your-key-here
+---
+
+## Common Issues
+
+### Backend routes not being hit
+- Ensure `src/__init__.py` exists in the backend directory
+- Verify the working directory is the `backend` folder
+- Check that MongoDB is running
+
+### "Address already in use"
+```bash
+# Find process on port 8000
+lsof -i :8000  # Linux/Mac
+Get-NetTCPConnection -LocalPort 8000  # Windows
+
+# Kill the process
+kill -9 <PID>  # Linux/Mac
 ```
 
-The server will start without the key but fail when LLM features are used.
+### PYTHONPATH errors
+- These should not occur now that `src/__init__.py` exists
+- Old method: `$env:PYTHONPATH = "src"` is no longer needed
 
-### MongoDB Connection Error
+---
 
-Verify MongoDB Atlas connection string in `.env`:
-```env
-MONGODB_URL=mongodb+srv://user:password@cluster.mongodb.net/?appName=Database
+## Frontend + Backend Together
+
+**Terminal 1 - Backend**:
+```bash
+cd backend
+uvicorn src.main:app --reload
 ```
 
-## Development
+**Terminal 2 - Frontend**:
+```bash
+cd frontend
+npm run dev
+```
 
-### Run Tests
+Frontend will be at: `http://localhost:3000`
+Backend will be at: `http://localhost:8000`
+
+---
+
+## Testing Registration Flow
+
+1. Go to `http://localhost:3000/signup`
+2. Select a role (Doctor, Pharma, Researcher)
+3. Fill in the form with role-specific fields
+4. Submit registration
+5. Should redirect to login page
+
+---
+
+## Database Indexes
+
+For best performance, create these MongoDB indexes:
 
 ```bash
-pytest tests/
+# Connect to MongoDB and run:
+db.users.createIndex({ email: 1 }, { unique: true })
+db.users.createIndex({ role: 1 })
+db.users.createIndex({ created_at: -1 })
 ```
 
-### Code Quality
-
-```bash
-black src/
-flake8 src/
-mypy src/
-```
-
-## Production Deployment
-
-For production, use a production ASGI server:
-
-```bash
-gunicorn -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 src.main:app
-```
-
-Or with Docker:
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY src/ src/
-ENV PYTHONPATH=src
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-## License
-
-Proprietary - COHERENCE-26 Project

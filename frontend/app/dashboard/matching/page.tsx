@@ -68,10 +68,11 @@ export default function MatchingPage() {
     }
   };
 
-  const getPatientLabel = (p: Patient) => {
+  const getPatientLabel = (p: any) => {
     const id = p.display_id || p._id.slice(0, 8);
-    const condition = p.conditions?.[0]?.name || "Unknown";
-    const age = p.demographics?.age;
+    // Support both formats: new simplified and old nested
+    const condition = p.primary_condition || p.conditions?.[0]?.name || "Unknown";
+    const age = p.age ?? p.demographics?.age;
     return `${id} · ${condition}${age ? ` · Age ${age}` : ""}`;
   };
 
@@ -103,7 +104,14 @@ export default function MatchingPage() {
         <Card>
           <h2 className="text-sm font-semibold text-text-primary mb-4">Select Patient</h2>
           {patientsLoading ? (
-            <div className="h-12 rounded-xl bg-surface-muted animate-pulse" />
+            <div className="space-y-2">
+              <div className="h-12 rounded-xl bg-surface-muted animate-pulse" />
+              <p className="text-xs text-text-muted text-center py-4">Loading patient data...</p>
+            </div>
+          ) : patients.length === 0 ? (
+            <div className="h-12 rounded-xl border-2 border-dashed border-surface-border flex items-center justify-center text-text-muted text-sm">
+              No patients found. Upload patients first.
+            </div>
           ) : (
             <div className="relative">
               <button
@@ -113,11 +121,11 @@ export default function MatchingPage() {
                 {selectedPatient ? (
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-xs font-bold text-brand-purple bg-brand-purple-light px-2 py-0.5 rounded-lg">
-                      {selectedPatient.display_id || selectedPatient._id.slice(0, 8)}
+                      {(selectedPatient as any).display_id || selectedPatient._id.slice(0, 8)}
                     </span>
                     <span className="text-sm font-medium text-text-primary truncate">
-                      {selectedPatient.conditions?.[0]?.name || "Patient"}
-                      {selectedPatient.demographics?.age ? ` · Age ${selectedPatient.demographics.age}` : ""}
+                      {(selectedPatient as any).primary_condition || selectedPatient.conditions?.[0]?.name || "Patient"}
+                      {((selectedPatient as any).age ?? selectedPatient.demographics?.age) ? ` · Age ${(selectedPatient as any).age ?? selectedPatient.demographics?.age}` : ""}
                     </span>
                   </div>
                 ) : (
@@ -143,7 +151,7 @@ export default function MatchingPage() {
                         No patients found. Upload patients first.
                       </div>
                     ) : (
-                      patients.map((p) => (
+                      patients.map((p: any) => (
                         <button
                           key={p._id}
                           className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-muted transition-colors text-left border-b border-surface-border last:border-0"
@@ -158,12 +166,30 @@ export default function MatchingPage() {
                           </span>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-text-primary truncate">
-                              {p.conditions?.[0]?.name || "Unknown condition"}
+                              {p.primary_condition || p.conditions?.[0]?.name || "No condition data"}
                             </p>
-                            <p className="text-xs text-text-muted">
-                              {p.demographics?.age ? `Age ${p.demographics.age}` : ""}
-                              {p.demographics?.gender ? ` · ${p.demographics.gender}` : ""}
-                            </p>
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                              {(p.age ?? p.demographics?.age) && (
+                                <span className="text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
+                                  Age {p.age ?? p.demographics?.age}
+                                </span>
+                              )}
+                              {(p.gender ?? p.demographics?.gender) && (
+                                <span className="text-xs bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded">
+                                  {p.gender ?? p.demographics?.gender}
+                                </span>
+                              )}
+                              {p.medications_count > 0 && (
+                                <span className="text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded">
+                                  {p.medications_count} meds
+                                </span>
+                              )}
+                              {p.additional_conditions_count > 0 && (
+                                <span className="text-xs bg-orange-50 text-orange-700 px-1.5 py-0.5 rounded">
+                                  +{p.additional_conditions_count} more
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </button>
                       ))
@@ -187,20 +213,53 @@ export default function MatchingPage() {
             transition={{ duration: 0.3 }}
           >
             <Card>
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div>
-                  <h3 className="font-semibold text-text-primary text-sm">Ready to match</h3>
-                  <p className="text-xs text-text-muted mt-0.5">
-                    Patient {getPatientLabel(selectedPatient)} selected. Click to run the 3-tier AI matching pipeline.
-                  </p>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-text-primary">Patient Selected</h3>
+                    <p className="text-xs text-text-muted mt-0.5">Ready to run AI-powered matching</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-text-muted mb-1">Patient ID</p>
+                    <p className="font-mono font-bold text-brand-purple">{(selectedPatient as any).display_id || selectedPatient._id.slice(0, 8)}</p>
+                  </div>
                 </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-blue-50 rounded-lg p-3">
+                    <p className="text-xs text-text-muted mb-1">Condition</p>
+                    <p className="text-sm font-medium text-blue-900 truncate">
+                      {(selectedPatient as any).primary_condition || selectedPatient.conditions?.[0]?.name || "No data"}
+                    </p>
+                  </div>
+                  <div className="bg-purple-50 rounded-lg p-3">
+                    <p className="text-xs text-text-muted mb-1">Age</p>
+                    <p className="text-sm font-medium text-purple-900">
+                      {((selectedPatient as any).age ?? selectedPatient.demographics?.age) ?? "N/A"}
+                    </p>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <p className="text-xs text-text-muted mb-1">Medications</p>
+                    <p className="text-sm font-medium text-green-900">
+                      {(selectedPatient as any).medications_count ?? 0}
+                    </p>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg p-3">
+                    <p className="text-xs text-text-muted mb-1">Lab Values</p>
+                    <p className="text-sm font-medium text-orange-900">
+                      {(selectedPatient as any).lab_values_count ?? 0}
+                    </p>
+                  </div>
+                </div>
+
                 <Button
                   variant="primary"
                   size="md"
+                  className="w-full"
                   leftIcon={<Zap size={16} />}
                   onClick={handleRunMatching}
                 >
-                  Run Matching
+                  Run 3-Tier AI Matching Pipeline
                 </Button>
               </div>
             </Card>

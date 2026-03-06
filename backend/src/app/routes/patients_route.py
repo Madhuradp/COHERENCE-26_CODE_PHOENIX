@@ -67,8 +67,8 @@ async def bulk_upload_patients(patients: List[dict]):
     if not patients or len(patients) == 0:
         raise HTTPException(status_code=400, detail="No patients provided")
 
-    if len(patients) > 1000:
-        raise HTTPException(status_code=400, detail="Maximum 1000 patients per request")
+    if len(patients) > 10000:
+        raise HTTPException(status_code=400, detail="Maximum 10000 patients per request")
 
     results = {
         "success_count": 0,
@@ -137,12 +137,67 @@ async def bulk_upload_patients(patients: List[dict]):
 
 @router.get("/", response_model=ResponseModel)
 async def list_patients():
+    """
+    Get list of patients for matching selection.
+
+    DATA DISPLAY POLICY:
+    ✅ SHOWN (Required for Clinical Trial Matching):
+       - Age (for age eligibility filtering)
+       - Gender (for gender eligibility)
+       - Condition/Diagnosis (primary medical condition)
+       - Medications (for drug interaction checks)
+       - Lab Values (for lab result matching)
+
+    🔒 REDACTED (Personal/Sensitive Data):
+       - Patient Name
+       - Patient Email
+       - Phone Number
+       - Clinical Notes (free-text narratives)
+    """
     db = Database()
-    # Return redacted patients, exclude embeddings for speed
-    patients = list(db.patients.find({}, {"embedding": 0}))
+    # Exclude embeddings and narrative clinical notes (PII)
+    patients = list(db.patients.find({}, {"embedding": 0, "clinical_notes_text": 0}))
+
+    formatted_patients = []
     for p in patients:
-        p["_id"] = str(p["_id"])
-    return {"success": True, "data": patients}
+        # Extract medical data (NEEDED FOR MATCHING - ALWAYS SHOWN)
+        demographics = p.get("demographics", {}) or {}
+        conditions = p.get("conditions", []) or []
+        medications = p.get("medications", []) or []
+        lab_values = p.get("lab_values", []) or []
+
+        # Extract primary condition safely
+        primary_condition = "No condition"
+        if conditions and isinstance(conditions, list) and len(conditions) > 0:
+            first = conditions[0]
+            if isinstance(first, dict):
+                primary_condition = first.get("name", "Unknown diagnosis")
+
+        # Extract demographics safely
+        age = demographics.get("age") if isinstance(demographics, dict) else None
+        gender = demographics.get("gender") if isinstance(demographics, dict) else None
+
+        formatted_patients.append({
+            # Patient ID (anonymized)
+            "_id": str(p["_id"]),
+            "display_id": p.get("display_id", f"PAT-{str(p['_id'])[-4:].upper()}"),
+
+            # Medical Data (✅ SHOWN - Required for matching)
+            "age": age,                            # For age-based trial eligibility
+            "gender": gender,                      # For gender-based trial eligibility
+            "primary_condition": primary_condition,  # For condition matching
+            "medications_count": len(medications),  # For medication analysis
+            "lab_values_count": len(lab_values),    # For lab result matching
+            "additional_conditions_count": max(0, len(conditions) - 1),
+
+            # Full medical records (for backend processing)
+            "conditions": conditions,
+            "medications": medications,
+            "lab_values": lab_values,
+            "demographics": demographics
+        })
+
+    return {"success": True, "data": formatted_patients}
 
 
 # ============ PATIENT SELF-SERVICE ROUTES ============

@@ -22,7 +22,7 @@ class Database:
             # Services attached to DB logic
             cls._instance.pii = PIIRedactionService()
             
-            print(f"✓ Database Initialized: {Config.DATABASE_NAME}")
+            print(f"[OK] Database Initialized: {Config.DATABASE_NAME}")
         return cls._instance
 
 # Global helper to get the database instance
