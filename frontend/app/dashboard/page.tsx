@@ -54,7 +54,7 @@ export default function DashboardPage() {
       <motion.div variants={itemVariants}>
         <h1 className="text-2xl font-bold text-text-primary">Dashboard Overview</h1>
         <p className="text-sm text-text-muted mt-0.5">
-          Welcome back, {user?.full_name || "Clinician"}. Here&apos;s what&apos;s happening today.
+          Welcome back, {user?.full_name || user?.researcher_profile?.full_name || user?.pharma_profile?.company_name || "Clinician"}. Here&apos;s what&apos;s happening today.
         </p>
       </motion.div>
 

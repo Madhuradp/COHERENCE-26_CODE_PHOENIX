@@ -57,7 +57,7 @@ export default function PatientDashboardPage() {
       {/* Header */}
       <motion.div variants={itemVariants}>
         <h1 className="text-2xl font-bold text-text-primary">
-          Welcome back, {auth.user?.full_name || "Patient"}
+          Welcome back, {auth.user?.patient_profile?.patient_name || "Patient"}
         </h1>
         <p className="text-sm text-text-muted mt-0.5">
           Here&apos;s your clinical trial matching summary.

@@ -77,6 +77,7 @@ export interface PatientProfile {
 export interface UserResponse {
   email: string;
   role: string;
+  full_name?: string;
   is_active: boolean;
   is_email_verified: boolean;
   created_at: string;

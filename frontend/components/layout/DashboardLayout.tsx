@@ -13,6 +13,8 @@ import {
   BarChart3,
   Settings,
 } from "lucide-react";
+import { useAuth } from "@/lib/authContext";
+import type { UserResponse } from "@/lib/api";
 
 const clinicianNavItems = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
@@ -24,19 +26,32 @@ const clinicianNavItems = [
   { href: "/dashboard/settings", icon: Settings, label: "Settings" },
 ];
 
-const clinicianUser = {
-  initials: "SC",
-  name: "Dr. Sarah Chen",
-  subtitle: "Oncologist · AIIMS",
-};
+function getClinicianName(user: UserResponse | null): string {
+  if (!user) return "Clinician";
+  if (user.full_name) return user.full_name;
+  if (user.researcher_profile?.full_name) return user.researcher_profile.full_name;
+  if (user.pharma_profile?.company_name) return user.pharma_profile.company_name;
+  return user.email.split("@")[0];
+}
 
-const clinicianNavbarUser = {
-  name: "Dr. Sarah Chen",
-  role: "Doctor",
-  initials: "SC",
-  email: "sarah@aiims.edu",
-  settingsHref: "/dashboard/settings",
-};
+function getRoleLabel(user: UserResponse | null): string {
+  if (!user) return "Clinician";
+  const map: Record<string, string> = {
+    DOCTOR: "Doctor",
+    PHARMACEUTICAL_COMPANY: "Pharma Company",
+    CLINICAL_RESEARCHER: "Researcher",
+  };
+  return map[user.role] || "Clinician";
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase())
+    .slice(0, 2)
+    .join("");
+}
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -45,6 +60,25 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { user } = useAuth();
+
+  const displayName = getClinicianName(user);
+  const roleLabel = getRoleLabel(user);
+  const initials = getInitials(displayName);
+
+  const clinicianUser = {
+    initials,
+    name: displayName,
+    subtitle: roleLabel,
+  };
+
+  const clinicianNavbarUser = {
+    name: displayName,
+    role: roleLabel,
+    initials,
+    email: user?.email || "",
+    settingsHref: "/dashboard/settings",
+  };
 
   return (
     <div className="flex h-screen bg-surface-bg overflow-hidden">

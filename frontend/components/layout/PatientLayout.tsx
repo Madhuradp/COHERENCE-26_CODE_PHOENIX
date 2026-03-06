@@ -12,6 +12,7 @@ import {
   History,
   Settings,
 } from "lucide-react";
+import { useAuth } from "@/lib/authContext";
 
 const patientNavItems = [
   { href: "/patient", icon: LayoutDashboard, label: "Dashboard" },
@@ -22,19 +23,14 @@ const patientNavItems = [
   { href: "/patient/settings", icon: Settings, label: "Settings" },
 ];
 
-const patientSidebarUser = {
-  initials: "RS",
-  name: "Rahul Sharma",
-  subtitle: "Patient",
-};
-
-const patientNavbarUser = {
-  name: "Rahul Sharma",
-  role: "Patient",
-  initials: "RS",
-  email: "rahul@email.com",
-  settingsHref: "/patient/settings",
-};
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase())
+    .slice(0, 2)
+    .join("");
+}
 
 const patientNotifications = [
   { id: 1, text: "Your eligibility check is complete — 3 matches found", time: "5 min ago", unread: true },
@@ -45,6 +41,24 @@ const patientNotifications = [
 export function PatientLayout({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { user } = useAuth();
+
+  const patientName = user?.patient_profile?.patient_name || "Patient";
+  const initials = getInitials(patientName);
+
+  const patientSidebarUser = {
+    initials,
+    name: patientName,
+    subtitle: "Patient",
+  };
+
+  const patientNavbarUser = {
+    name: patientName,
+    role: "Patient",
+    initials,
+    email: user?.email || "",
+    settingsHref: "/patient/settings",
+  };
 
   return (
     <div className="flex h-screen bg-surface-bg overflow-hidden">
