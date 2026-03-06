@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:5000';
+const BASE_URL = 'http://localhost:8000';
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -31,13 +31,60 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 
 // ── Types ────────────────────────────────────────────────────────────
 
+export interface DoctorProfile {
+  medical_degree: string;
+  specialization?: string;
+  license_number?: string;
+  hospital_name: string;
+  hospital_city?: string;
+  hospital_country?: string;
+  years_of_experience?: number;
+  phone?: string;
+  is_verified?: boolean;
+}
+
+export interface PharmaceuticalCompanyProfile {
+  company_name: string;
+  company_registration_number?: string;
+  department: string;
+  country: string;
+  industry_focus?: string[];
+  company_phone?: string;
+  website?: string;
+  is_verified?: boolean;
+}
+
+export interface ClinicalResearcherProfile {
+  full_name: string;
+  research_fields: string[];
+  institution?: string;
+  institution_country?: string;
+  publications_count?: number;
+  h_index?: number;
+  orcid?: string;
+  is_verified?: boolean;
+}
+
+export interface PatientProfile {
+  patient_name: string;
+  date_of_birth?: string;
+  patient_id?: string;
+  primary_condition?: string;
+  additional_conditions?: string[];
+  phone?: string;
+}
+
 export interface UserResponse {
   email: string;
-  full_name: string;
   role: string;
   is_active: boolean;
+  is_email_verified: boolean;
   created_at: string;
-  organization?: string;
+  last_login?: string;
+  doctor_profile?: DoctorProfile;
+  pharma_profile?: PharmaceuticalCompanyProfile;
+  researcher_profile?: ClinicalResearcherProfile;
+  patient_profile?: PatientProfile;
 }
 
 export interface LoginResponse {
@@ -140,14 +187,30 @@ export async function authLogin(email: string, password: string): Promise<LoginR
 }
 
 export async function authRegister(
-  email: string,
-  password: string,
-  full_name: string,
-  role: string
-): Promise<UserResponse> {
-  return apiFetch<UserResponse>('/api/auth/register', {
+  role: string,
+  data: Record<string, unknown>
+): Promise<{ success: boolean; message: string; user_id: string; email: string; role: string }> {
+  const roleEndpoints: Record<string, string> = {
+    'doctor': '/api/auth/register/doctor',
+    'DOCTOR': '/api/auth/register/doctor',
+    'pharma': '/api/auth/register/pharmaceutical-company',
+    'PHARMACEUTICAL_COMPANY': '/api/auth/register/pharmaceutical-company',
+    'PHARMACIST': '/api/auth/register/pharmaceutical-company',
+    'researcher': '/api/auth/register/researcher',
+    'CLINICAL_RESEARCHER': '/api/auth/register/researcher',
+    'RESEARCHER': '/api/auth/register/researcher',
+    'patient': '/api/auth/register/patient',
+    'PATIENT': '/api/auth/register/patient',
+  };
+
+  const endpoint = roleEndpoints[role];
+  if (!endpoint) {
+    throw new Error(`Unknown role: ${role}`);
+  }
+
+  return apiFetch(endpoint, {
     method: 'POST',
-    body: JSON.stringify({ email, password, full_name, role }),
+    body: JSON.stringify(data),
   });
 }
 

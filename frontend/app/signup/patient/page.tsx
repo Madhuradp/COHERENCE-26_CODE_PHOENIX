@@ -47,7 +47,11 @@ export default function PatientSignupPage() {
     setLoading(true);
     setApiError(null);
     try {
-      await authRegister(data.email, data.password, data.name, "PATIENT");
+      await authRegister("PATIENT", {
+        email: data.email,
+        password: data.password,
+        patient_name: data.name,
+      });
       router.push("/login");
     } catch (err: unknown) {
       setApiError(err instanceof Error ? err.message : "Registration failed");

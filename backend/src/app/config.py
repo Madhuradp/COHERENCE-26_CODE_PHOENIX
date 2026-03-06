@@ -14,7 +14,7 @@ class Config:
     DATABASE_NAME = os.getenv("DATABASE_NAME", "trial_match")
 
     # Server settings
-    PORT = int(os.getenv("PORT", 5000))
+    PORT = int(os.getenv("PORT", 8000))
 
     # JWT settings
     JWT_SECRET = os.getenv("JWT_SECRET", "your_jwt_secret_key")

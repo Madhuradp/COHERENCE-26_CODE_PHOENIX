@@ -89,7 +89,13 @@ function DoctorSignupForm({ onBack }: { onBack: () => void }) {
     setLoading(true);
     setApiError(null);
     try {
-      await authRegister(data.email, data.password, data.name, "DOCTOR");
+      await authRegister("DOCTOR", {
+        email: data.email,
+        password: data.password,
+        full_name: data.name,
+        medical_degree: data.degree,
+        hospital_name: data.hospital,
+      });
       router.push("/login");
     } catch (err: unknown) {
       setApiError(err instanceof Error ? err.message : "Registration failed");
@@ -134,7 +140,13 @@ function PharmaSignupForm({ onBack }: { onBack: () => void }) {
     setLoading(true);
     setApiError(null);
     try {
-      await authRegister(data.orgEmail, data.password, data.companyName, "PHARMACIST");
+      await authRegister("PHARMACEUTICAL_COMPANY", {
+        email: data.orgEmail,
+        password: data.password,
+        company_name: data.companyName,
+        department: data.department,
+        country: data.country,
+      });
       router.push("/login");
     } catch (err: unknown) {
       setApiError(err instanceof Error ? err.message : "Registration failed");
@@ -179,7 +191,12 @@ function ResearcherSignupForm({ onBack }: { onBack: () => void }) {
     setLoading(true);
     setApiError(null);
     try {
-      await authRegister(data.email, data.password, data.name, "RESEARCHER");
+      await authRegister("CLINICAL_RESEARCHER", {
+        email: data.email,
+        password: data.password,
+        full_name: data.name,
+        research_fields: [data.researchField],
+      });
       router.push("/login");
     } catch (err: unknown) {
       setApiError(err instanceof Error ? err.message : "Registration failed");

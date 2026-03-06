@@ -8,7 +8,8 @@ It automatically skips:
   * __pycache__ directories and compiled files (.pyc, .pyo)
   * hidden files/directories starting with a dot
   * non-python files (extensions other than .py, .txt maybe if desired)
-
+ 
+  
 Run from the workspace root::
 
     python backend/scripts/export_code.py
