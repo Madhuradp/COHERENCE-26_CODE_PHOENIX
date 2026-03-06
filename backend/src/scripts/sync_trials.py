@@ -8,7 +8,8 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.db_integration import fetch_and_store_trials
+from app.db_integration import TrialsDB
+from scripts.fetch_clinical_trials import ClinicalTrialsFetcher
 
 
 def main():
@@ -17,32 +18,65 @@ def main():
     print("Clinical Trials Sync Script")
     print("=" * 60)
 
-    # Example 1: Fetch COVID-19 recruiting trials
-    print("\n[1/3] Syncing COVID-19 recruiting trials...")
-    result = fetch_and_store_trials(
-        condition="COVID-19",
-        status="RECRUITING",
-        limit=50
-    )
-    print(f"Result: {result}\n")
+    try:
+        # Initialize fetcher and database
+        fetcher = ClinicalTrialsFetcher()
+        db = TrialsDB()
 
-    # Example 2: Fetch cancer trials
-    print("[2/3] Syncing cancer trials...")
-    result = fetch_and_store_trials(
-        condition="cancer",
-        limit=50
-    )
-    print(f"Result: {result}\n")
+        # Fetch first 2 pages of trials (200 trials)
+        print("\nFetching trials from API (first 2 pages)...")
+        api_data = fetcher.fetch_trials_paginated(limit=100, max_pages=2)
 
-    # Example 3: Fetch all recruiting trials
-    print("[3/3] Syncing all recruiting trials...")
-    result = fetch_and_store_trials(
-        status="RECRUITING",
-        limit=100
-    )
-    print(f"Result: {result}\n")
+        if "error" in api_data:
+            print(f"Error fetching from API: {api_data['error']}")
+            return
 
-    print("=" * 60)
+        # Parse all trials
+        print(f"\nParsing {len(api_data['studies'])} trials...")
+        all_trials = fetcher.parse_trials(api_data)
+        print(f"Parsed {len(all_trials)} trials")
+
+        # Filter and store subsets
+        print("\n" + "=" * 60)
+        print("Filtering and storing trials by condition...")
+        print("=" * 60)
+
+        conditions = ["COVID-19", "cancer", "diabetes", "heart"]
+        for condition in conditions:
+            filtered = fetcher.filter_trials_locally(all_trials, condition=condition)
+            if filtered:
+                result = db.insert_trials(filtered)
+                print(f"\n{condition.upper()}:")
+                print(f"  Found: {len(filtered)} trials")
+                print(f"  Inserted: {result['inserted']}, Updated: {result['updated']}, Errors: {result['errors']}")
+
+        # Store recruiting trials
+        print("\n" + "-" * 60)
+        recruiting = fetcher.filter_trials_locally(all_trials, status="RECRUITING")
+        if recruiting:
+            result = db.insert_trials(recruiting)
+            print(f"\nRECRUITING TRIALS:")
+            print(f"  Found: {len(recruiting)} trials")
+            print(f"  Inserted: {result['inserted']}, Updated: {result['updated']}, Errors: {result['errors']}")
+
+        # Print statistics
+        print("\n" + "=" * 60)
+        print("Database Statistics")
+        print("=" * 60)
+        stats = db.get_statistics()
+        print(f"Total trials in database: {stats.get('total_trials', 0)}")
+        print(f"Status breakdown:")
+        for status, count in stats.get('status_breakdown', {}).items():
+            print(f"  {status}: {count}")
+
+        db.close()
+
+    except Exception as e:
+        print(f"Error during sync: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print("\n" + "=" * 60)
     print("Sync complete!")
     print("=" * 60)
 

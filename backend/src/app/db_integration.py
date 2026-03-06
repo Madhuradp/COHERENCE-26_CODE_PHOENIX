@@ -196,20 +196,20 @@ class TrialsDB:
 
 def fetch_and_store_trials(
     condition: Optional[str] = None,
-    intervention: Optional[str] = None,
     status: Optional[str] = None,
     country: Optional[str] = None,
-    limit: int = 50,
+    max_pages: int = 2,
 ) -> Dict[str, Any]:
     """
     Convenience function to fetch trials from API and store in database
 
+    Note: API doesn't support server-side filtering, so filtering happens locally
+
     Args:
-        condition: Medical condition
-        intervention: Type of intervention
-        status: Trial status
-        country: Country code
-        limit: Number of trials to fetch
+        condition: Medical condition (local filter)
+        status: Trial status (local filter)
+        country: Country code (local filter)
+        max_pages: Number of pages to fetch from API
 
     Returns:
         Dictionary with operation results
@@ -219,25 +219,28 @@ def fetch_and_store_trials(
         fetcher = ClinicalTrialsFetcher()
         db = TrialsDB()
 
-        # Fetch from API
-        print(f"Fetching {limit} trials from API...")
-        api_data = fetcher.fetch_trials(
-            condition=condition,
-            intervention=intervention,
-            status=status,
-            country=country,
-            limit=limit
-        )
+        # Fetch from API with pagination
+        print(f"Fetching trials from API ({max_pages} pages)...")
+        api_data = fetcher.fetch_trials_paginated(limit=100, max_pages=max_pages)
 
         if "error" in api_data:
             return {"success": False, "error": api_data["error"]}
 
         # Parse trials
-        trials = fetcher.parse_trials(api_data)
-        print(f"Parsed {len(trials)} trials")
+        all_trials = fetcher.parse_trials(api_data)
+        print(f"Parsed {len(all_trials)} trials from API")
+
+        # Filter locally
+        filtered_trials = fetcher.filter_trials_locally(
+            all_trials,
+            condition=condition,
+            status=status,
+            country=country
+        )
+        print(f"After filtering: {len(filtered_trials)} trials")
 
         # Store in database
-        result = db.insert_trials(trials)
+        result = db.insert_trials(filtered_trials)
         print(f"Database result: {result}")
 
         # Update metadata
@@ -245,7 +248,8 @@ def fetch_and_store_trials(
             "timestamp": datetime.utcnow().isoformat(),
             "condition": condition,
             "status": status,
-            "count": len(trials)
+            "country": country,
+            "count": len(filtered_trials)
         })
 
         db.close()
@@ -253,20 +257,13 @@ def fetch_and_store_trials(
         return {
             "success": True,
             "api_total": api_data.get("totalCount"),
-            "parsed": len(trials),
+            "parsed": len(all_trials),
+            "filtered": len(filtered_trials),
             **result
         }
 
     except Exception as e:
         print(f"Error in fetch_and_store_trials: {e}")
+        import traceback
+        traceback.print_exc()
         return {"success": False, "error": str(e)}
-
-
-if __name__ == "__main__":
-    # Example usage
-    result = fetch_and_store_trials(
-        condition="COVID-19",
-        status="RECRUITING",
-        limit=50
-    )
-    print(f"Result: {result}")

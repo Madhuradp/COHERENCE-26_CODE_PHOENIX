@@ -38,7 +38,14 @@ JWT_SECRET=your_jwt_secret_key
 
 The config is automatically loaded via `src/app/config.py`
 
-### 2. Run the Sync Script
+### 2. Install Dependencies
+
+```bash
+cd backend
+pip install -r requirements.txt  # or use venv
+```
+
+### 3. Run the Sync Script
 
 Sync clinical trials from API to MongoDB:
 
@@ -48,12 +55,22 @@ python -m src.scripts.sync_trials
 ```
 
 This will:
-- Fetch COVID-19 recruiting trials
-- Fetch cancer trials
-- Fetch all recruiting trials
+- Fetch 200 trials from the ClinicalTrials.gov API
+- Filter by common conditions (COVID-19, cancer, diabetes, heart)
 - Store everything in MongoDB
+- Display statistics
 
-### 3. Use in FastAPI
+Expected output:
+```
+Total trials in database: 48
+Status breakdown:
+  RECRUITING: 26
+  COMPLETED: 11
+  TERMINATED: 3
+  ...
+```
+
+### 4. Use in FastAPI
 
 Include the routes in your main app:
 
@@ -66,9 +83,9 @@ app = FastAPI()
 app.include_router(trials_router)
 ```
 
-### 4. Available Endpoints
+### 5. Available Endpoints
 
-Once integrated, you'll have:
+Once integrated and data is synced, you'll have:
 
 ```
 GET /api/trials/search

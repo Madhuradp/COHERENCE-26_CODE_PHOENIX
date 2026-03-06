@@ -1,6 +1,9 @@
 """
 Fetch clinical trial data from ClinicalTrials.gov API
 https://clinicaltrials.gov/data-api/api
+
+Note: The v2 API at /api/v2/studies does not support filtering via query parameters.
+This script fetches all trials via pagination and provides local filtering capabilities.
 """
 
 import requests
@@ -9,7 +12,6 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
-RATE_LIMIT_DELAY = 0.1  # seconds between requests to respect API rate limits
 
 
 class ClinicalTrialsFetcher:
@@ -22,78 +24,65 @@ class ClinicalTrialsFetcher:
             'User-Agent': 'Mozilla/5.0 (compatible; TrialMatch/1.0)'
         })
 
-    def fetch_trials(
+    def fetch_trials_paginated(
         self,
-        query: Optional[str] = None,
-        condition: Optional[str] = None,
-        intervention: Optional[str] = None,
-        status: Optional[str] = None,
-        country: Optional[str] = None,
-        limit: int = 10,
-        offset: int = 0,
-        **kwargs
+        limit: int = 100,
+        max_pages: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Fetch clinical trials with various filters
+        Fetch trials with pagination using nextPageToken
 
         Args:
-            query: Search query string
-            condition: Medical condition to search for
-            intervention: Type of intervention
-            status: Trial status (e.g., 'RECRUITING', 'ACTIVE_NOT_RECRUITING')
-            country: Country code
-            limit: Maximum number of results (max 1000)
-            offset: Pagination offset
-            **kwargs: Additional API parameters
+            limit: Number of results per page (default 100)
+            max_pages: Maximum pages to fetch (None = fetch all)
 
         Returns:
-            Dictionary containing trials data and metadata
+            Dictionary containing all trials data
         """
-        params = {
-            "pageSize": min(limit, 1000),
-            "pageNumber": (offset // limit) + 1 if limit > 0 else 1,
-            "format": "json"
-        }
-
-        # Build filter string
-        filters = []
-
-        if query:
-            filters.append(f'query.name:CONTAINS("{query}")')
-            filters.append(f'query.cond:CONTAINS("{query}")')
-
-        if condition:
-            filters.append(f'condition:CONTAINS("{condition}")')
-
-        if intervention:
-            filters.append(f'interventionType:{intervention}')
-
-        if status:
-            filters.append(f'overallStatus:{status}')
-
-        if country:
-            filters.append(f'country:{country}')
-
-        # Add custom filters from kwargs
-        for key, value in kwargs.items():
-            if value:
-                filters.append(f'{key}:{value}')
-
-        if filters:
-            params['filter'] = " AND ".join(filters)
+        all_studies = []
+        next_token = None
+        page_count = 0
 
         try:
-            print(f"Fetching trials with params: {params}")
-            response = self.session.get(self.api_url, params=params, timeout=30)
-            response.raise_for_status()
-            return response.json()
+            while True:
+                params = {"pageSize": min(limit, 1000)}
+                if next_token:
+                    params["pageToken"] = next_token
+
+                print(f"Fetching page {page_count + 1}...")
+                response = self.session.get(self.api_url, params=params, timeout=30)
+                response.raise_for_status()
+
+                data = response.json()
+                studies = data.get("studies", [])
+                all_studies.extend(studies)
+                page_count += 1
+
+                print(f"  Got {len(studies)} studies (total: {len(all_studies)})")
+
+                # Check for next page
+                next_token = data.get("nextPageToken")
+                if not next_token or (max_pages and page_count >= max_pages):
+                    break
+
+            return {
+                "studies": all_studies,
+                "totalCount": len(all_studies),
+                "pagesRetrieved": page_count
+            }
+
         except requests.exceptions.RequestException as e:
             print(f"Error fetching trials: {e}")
-            return {"studies": [], "totalCount": 0, "error": str(e)}
+            return {
+                "studies": all_studies,
+                "totalCount": len(all_studies),
+                "pagesRetrieved": page_count,
+                "error": str(e)
+            }
 
-    def fetch_trial_details(self, nct_id: str) -> Dict[str, Any]:
+    def fetch_trial_by_nct_id(self, nct_id: str) -> Dict[str, Any]:
         """
-        Fetch detailed information about a specific trial
+        Fetch a specific trial by NCT ID
 
         Args:
             nct_id: The NCT ID of the trial (e.g., 'NCT04234699')
@@ -107,7 +96,7 @@ class ClinicalTrialsFetcher:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching trial details for {nct_id}: {e}")
+            print(f"Error fetching trial {nct_id}: {e}")
             return {"error": str(e)}
 
     def parse_trials(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -131,6 +120,8 @@ class ClinicalTrialsFetcher:
                 contacts_locations_module = protocol_section.get("contactsLocationsModule", {})
                 conditions_module = protocol_section.get("conditionsModule", {})
                 interventions_module = protocol_section.get("interventionsModule", {})
+                description_module = protocol_section.get("descriptionModule", {})
+                sponsor_module = protocol_section.get("sponsorCollaboratorsModule", {})
 
                 trial = {
                     "nct_id": identification_module.get("nctId"),
@@ -143,6 +134,7 @@ class ClinicalTrialsFetcher:
                     "primary_completion_date": status_module.get("primaryCompletionDateStruct", {}).get("date"),
                     "conditions": conditions_module.get("conditions", []),
                     "keywords": conditions_module.get("keywords", []),
+                    "description": description_module.get("briefSummary"),
                     "interventions": [
                         {
                             "name": i.get("name"),
@@ -163,6 +155,7 @@ class ClinicalTrialsFetcher:
                         for loc in contacts_locations_module.get("locations", [])
                     ],
                     "enrollment": status_module.get("enrollmentInfo", {}).get("count"),
+                    "sponsor": sponsor_module.get("leadSponsor", {}).get("name"),
                     "fetched_at": datetime.utcnow().isoformat()
                 }
                 trials.append(trial)
@@ -180,3 +173,42 @@ class ClinicalTrialsFetcher:
             print(f"Saved {len(data)} trials to {filename}")
         except Exception as e:
             print(f"Error saving to JSON: {e}")
+
+    def filter_trials_locally(
+        self,
+        trials: List[Dict[str, Any]],
+        condition: Optional[str] = None,
+        status: Optional[str] = None,
+        country: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter trials locally (after fetching all data)
+
+        Args:
+            trials: List of trial records
+            condition: Filter by condition (substring match)
+            status: Filter by status (exact match)
+            country: Filter by country (exact match)
+
+        Returns:
+            Filtered list of trials
+        """
+        filtered = trials
+
+        if condition:
+            condition_lower = condition.lower()
+            filtered = [
+                t for t in filtered
+                if any(condition_lower in c.lower() for c in t.get("conditions", []))
+            ]
+
+        if status:
+            filtered = [t for t in filtered if t.get("overall_status") == status.upper()]
+
+        if country:
+            filtered = [
+                t for t in filtered
+                if any(loc.get("country") == country for loc in t.get("locations", []))
+            ]
+
+        return filtered

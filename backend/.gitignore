@@ -47,3 +47,18 @@ coverage/
 .cache/
 temp/
 tmp/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual env
+venv/
+.env
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
