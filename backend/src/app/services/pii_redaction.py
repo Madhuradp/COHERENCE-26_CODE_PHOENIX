@@ -127,8 +127,21 @@ class PIIRedactionService:
 
         Returns:
             Tuple of (redacted_patient, pii_summary)
+
+        IMPORTANT: Medical data fields (medications, lab_values, conditions) are NEVER redacted
+        as they are essential for clinical trial matching
         """
-        redacted = patient.copy()
+        # Create deep copy to preserve medical data
+        import copy
+        redacted = copy.deepcopy(patient)
+
+        # Preserve medical data fields - these are NEVER redacted
+        medical_data_fields = ["medications", "lab_values", "conditions", "eligibility"]
+        preserved_medical = {}
+        for field in medical_data_fields:
+            if field in patient:
+                preserved_medical[field] = patient[field]
+
         pii_summary = {
             "has_pii": False,
             "redacted_fields": [],
@@ -136,7 +149,7 @@ class PIIRedactionService:
             "total_entities": 0
         }
 
-        # Fields to scan for PII
+        # Fields to scan for PII - ONLY narrative text, never structured medical data
         text_fields = [
             "clinical_notes_text",
             "demographics.notes",
@@ -162,21 +175,27 @@ class PIIRedactionService:
             # Redact if field exists
             if isinstance(value, dict) and last_key in value:
                 original_text = value[last_key]
-                redacted_text, entities = self.redact_text(original_text)
+                if isinstance(original_text, str):
+                    redacted_text, entities = self.redact_text(original_text)
 
-                if entities:
-                    pii_summary["has_pii"] = True
-                    pii_summary["redacted_fields"].append(field_path)
-                    pii_summary["total_entities"] += len(entities)
+                    if entities:
+                        pii_summary["has_pii"] = True
+                        pii_summary["redacted_fields"].append(field_path)
+                        pii_summary["total_entities"] += len(entities)
 
-                    # Count entity types
-                    for entity in entities:
-                        entity_type = entity["entity_type"]
-                        pii_summary["entity_counts"][entity_type] = \
-                            pii_summary["entity_counts"].get(entity_type, 0) + 1
+                        # Count entity types
+                        for entity in entities:
+                            entity_type = entity["entity_type"]
+                            pii_summary["entity_counts"][entity_type] = \
+                                pii_summary["entity_counts"].get(entity_type, 0) + 1
 
-                    # Update redacted value
-                    value[last_key] = redacted_text
+                        # Update redacted value
+                        value[last_key] = redacted_text
+
+        # RESTORE medical data fields to ensure they are never lost
+        for field in medical_data_fields:
+            if field in preserved_medical:
+                redacted[field] = preserved_medical[field]
 
         return redacted, pii_summary
 

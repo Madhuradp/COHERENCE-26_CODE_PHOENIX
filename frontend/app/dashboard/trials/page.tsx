@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { FlaskConical, RefreshCw, Search, Globe, MapPin } from "lucide-react";
+import { FlaskConical, RefreshCw, Search, Globe, MapPin, Download, Filter, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Table";
 import { searchTrials, syncTrials, searchTrialsLive, type Trial } from "@/lib/api";
+import { exportTrialsAsCSV } from "@/lib/csvUtils";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -88,6 +89,13 @@ export default function TrialsPage() {
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveSearched, setLiveSearched] = useState(false);
 
+  // Filter state
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [phaseFilter, setPhaseFilter] = useState<string>("");
+  const [minEnrollment, setMinEnrollment] = useState<number | "">("");
+  const [maxEnrollment, setMaxEnrollment] = useState<number | "">("");
+
   useEffect(() => {
     searchTrials({ limit: 50 })
       .then((res) => setTrials(res.data))
@@ -130,12 +138,28 @@ export default function TrialsPage() {
 
   const filtered = trials.filter((t) => {
     const s = search.toLowerCase();
-    return (
+
+    // Search filter
+    const matchesSearch = (
       (t.title || "").toLowerCase().includes(s) ||
       (t.nct_id || "").toLowerCase().includes(s) ||
       (t.conditions?.join(" ") || "").toLowerCase().includes(s) ||
       (t.sponsor || "").toLowerCase().includes(s)
     );
+
+    // Status filter
+    const matchesStatus = !statusFilter || (t.status || "").includes(statusFilter);
+
+    // Phase filter
+    const matchesPhase = !phaseFilter || (t.phase || "").includes(phaseFilter);
+
+    // Enrollment filter
+    const enrollment = t.enrollment || 0;
+    const matchesEnrollment =
+      (!minEnrollment || enrollment >= minEnrollment) &&
+      (!maxEnrollment || enrollment <= maxEnrollment);
+
+    return matchesSearch && matchesStatus && matchesPhase && matchesEnrollment;
   });
 
   return (
@@ -155,15 +179,29 @@ export default function TrialsPage() {
             {trials.length} trials in database · Search live from ClinicalTrials.gov
           </p>
         </div>
-        <Button
-          variant="primary"
-          size="md"
-          leftIcon={<RefreshCw size={16} className={syncing ? "animate-spin" : ""} />}
-          onClick={handleSync}
-          loading={syncing}
-        >
-          Sync from ClinicalTrials.gov
-        </Button>
+        <div className="flex gap-3">
+          <Button
+            variant="secondary"
+            size="md"
+            leftIcon={<Download size={16} />}
+            onClick={() => {
+              if (trials.length > 0) {
+                exportTrialsAsCSV(trials);
+              }
+            }}
+          >
+            Export CSV
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
+            leftIcon={<RefreshCw size={16} className={syncing ? "animate-spin" : ""} />}
+            onClick={handleSync}
+            loading={syncing}
+          >
+            Sync from ClinicalTrials.gov
+          </Button>
+        </div>
       </motion.div>
 
       {syncMsg && (
@@ -253,27 +291,147 @@ export default function TrialsPage() {
 
       {/* Database trials */}
       <motion.div variants={itemVariants}>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
           <h2 className="font-bold text-text-primary text-sm">Database Trials</h2>
-          <div className="relative max-w-xs">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-            <input
-              type="text"
-              placeholder="Filter by title, NCT ID, condition..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 rounded-xl text-sm bg-white border border-surface-border focus:border-brand-purple focus:ring-2 focus:ring-brand-purple/10 outline-none transition-all"
-            />
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[250px]">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+              <input
+                type="text"
+                placeholder="Filter by title, NCT ID, condition..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 rounded-xl text-sm bg-white border border-surface-border focus:border-brand-purple focus:ring-2 focus:ring-brand-purple/10 outline-none transition-all"
+              />
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Filter size={14} />}
+              onClick={() => setFilterOpen(!filterOpen)}
+              className={filterOpen ? "!border-brand-purple" : ""}
+            >
+              Filters
+            </Button>
           </div>
         </div>
+
+        {/* Filters Panel */}
+        {filterOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="mb-4 p-4 bg-surface-muted rounded-xl border border-surface-border"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              {/* Status Filter */}
+              <div>
+                <label className="block text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">
+                  Trial Status
+                </label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-surface-border focus:border-brand-purple outline-none"
+                >
+                  <option value="">All Status</option>
+                  <option value="RECRUITING">Recruiting</option>
+                  <option value="ACTIVE_NOT_RECRUITING">Active (Not Recruiting)</option>
+                  <option value="COMPLETED">Completed</option>
+                  <option value="NOT_YET_RECRUITING">Not Yet Recruiting</option>
+                  <option value="ENROLLING_BY_INVITATION">Enrolling by Invitation</option>
+                </select>
+              </div>
+
+              {/* Phase Filter */}
+              <div>
+                <label className="block text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">
+                  Phase
+                </label>
+                <select
+                  value={phaseFilter}
+                  onChange={(e) => setPhaseFilter(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-surface-border focus:border-brand-purple outline-none"
+                >
+                  <option value="">All Phases</option>
+                  <option value="Phase 1">Phase 1</option>
+                  <option value="Phase 2">Phase 2</option>
+                  <option value="Phase 3">Phase 3</option>
+                  <option value="Phase 4">Phase 4</option>
+                  <option value="N/A">Not Applicable</option>
+                </select>
+              </div>
+
+              {/* Min Enrollment */}
+              <div>
+                <label className="block text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">
+                  Min Enrollment
+                </label>
+                <input
+                  type="number"
+                  value={minEnrollment}
+                  onChange={(e) => setMinEnrollment(e.target.value ? Number(e.target.value) : "")}
+                  placeholder="0"
+                  className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-surface-border focus:border-brand-purple outline-none"
+                />
+              </div>
+
+              {/* Max Enrollment */}
+              <div>
+                <label className="block text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">
+                  Max Enrollment
+                </label>
+                <input
+                  type="number"
+                  value={maxEnrollment}
+                  onChange={(e) => setMaxEnrollment(e.target.value ? Number(e.target.value) : "")}
+                  placeholder="Any"
+                  className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-surface-border focus:border-brand-purple outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Clear Filters Button */}
+            {(statusFilter || phaseFilter || minEnrollment || maxEnrollment) && (
+              <div className="mt-4 flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={<X size={14} />}
+                  onClick={() => {
+                    setStatusFilter("");
+                    setPhaseFilter("");
+                    setMinEnrollment("");
+                    setMaxEnrollment("");
+                  }}
+                >
+                  Clear Filters
+                </Button>
+              </div>
+            )}
+          </motion.div>
+        )}
         <div className="flex flex-col gap-3">
+          {/* Results Summary */}
+          {!loading && trials.length > 0 && (
+            <div className="text-xs text-text-muted mb-2">
+              Showing <span className="font-semibold text-text-primary">{filtered.length}</span> of{" "}
+              <span className="font-semibold text-text-primary">{trials.length}</span> trials
+            </div>
+          )}
+
           {loading ? (
             [...Array(5)].map((_, i) => (
               <div key={i} className="h-24 rounded-2xl bg-surface-muted animate-pulse" />
             ))
-          ) : filtered.length === 0 ? (
+          ) : trials.length === 0 ? (
             <div className="text-center py-16 text-text-muted text-sm">
               No trials in database. Use &ldquo;Sync from ClinicalTrials.gov&rdquo; to fetch trials.
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-16 text-text-muted text-sm">
+              No trials match your filters. Try adjusting your search criteria.
             </div>
           ) : (
             filtered.map((trial, i) => (

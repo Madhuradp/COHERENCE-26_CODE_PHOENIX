@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from typing import List
+from datetime import datetime
 from ..core.database import Database
 from ..services.privacy_manager import PrivacyManager
 from ..services.semantic_search import SemanticSearchService
@@ -156,7 +157,18 @@ async def list_patients():
     """
     db = Database()
     # Exclude embeddings and narrative clinical notes (PII)
-    patients = list(db.patients.find({}, {"embedding": 0, "clinical_notes_text": 0}))
+    # EXPLICITLY INCLUDE medical data: conditions, medications, lab_values (NEVER redacted)
+    patients = list(db.patients.find(
+        {},
+        {
+            "conditions": 1,
+            "medications": 1,
+            "lab_values": 1,
+            "demographics": 1,
+            "display_id": 1,
+            "_id": 1
+        }
+    ))
 
     formatted_patients = []
     for p in patients:
@@ -340,3 +352,79 @@ async def get_fairness_stats(current_user: dict = Depends(get_current_user)):
         "data": stats,
         "message": "Fairness and compliance statistics"
     }
+
+
+# ============ DELETE ROUTES ============
+
+@router.delete("/{patient_id}", response_model=ResponseModel)
+async def delete_patient(patient_id: str):
+    """Delete a single patient by ID"""
+    db = Database()
+
+    try:
+        # Delete patient
+        result = db.patients.delete_one({"_id": ObjectId(patient_id)})
+
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Patient not found")
+
+        # Also delete associated match results
+        db.matches.delete_many({"patient_id": patient_id})
+
+        # Log deletion
+        db.audit.insert_one({
+            "event_type": "PATIENT_DELETED",
+            "patient_id": patient_id,
+            "timestamp": datetime.utcnow(),
+            "action": "Single patient deletion"
+        })
+
+        return {
+            "success": True,
+            "data": {"deleted_patient_id": patient_id},
+            "message": "Patient deleted successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete patient: {str(e)}")
+
+
+@router.post("/bulk-delete", response_model=ResponseModel)
+async def bulk_delete_patients(patient_ids: List[str]):
+    """Delete multiple patients at once"""
+    db = Database()
+
+    if not patient_ids:
+        raise HTTPException(status_code=400, detail="No patient IDs provided")
+
+    if len(patient_ids) > 1000:
+        raise HTTPException(status_code=400, detail="Maximum 1000 patients can be deleted at once")
+
+    try:
+        # Convert string IDs to ObjectId
+        object_ids = [ObjectId(pid) for pid in patient_ids]
+
+        # Delete patients
+        result = db.patients.delete_many({"_id": {"$in": object_ids}})
+
+        # Delete associated match results
+        db.matches.delete_many({"patient_id": {"$in": patient_ids}})
+
+        # Log bulk deletion
+        db.audit.insert_one({
+            "event_type": "BULK_DELETION",
+            "deleted_count": result.deleted_count,
+            "patient_ids": patient_ids,
+            "timestamp": datetime.utcnow(),
+            "action": f"Bulk deletion of {result.deleted_count} patients"
+        })
+
+        return {
+            "success": True,
+            "data": {
+                "deleted_count": result.deleted_count,
+                "requested_count": len(patient_ids)
+            },
+            "message": f"Successfully deleted {result.deleted_count} patient(s)"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete patients: {str(e)}")

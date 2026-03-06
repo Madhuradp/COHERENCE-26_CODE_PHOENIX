@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ClipboardList, Users, Star, FlaskConical, Search, CheckCircle, X, ChevronDown,
+  ClipboardList, Users, Star, FlaskConical, Search, CheckCircle, X, ChevronDown, Download,
 } from "lucide-react";
 import { StatCard } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Table, Badge } from "@/components/ui/Table";
 import { listPatients, getMatchResults, type Patient, type MatchResult } from "@/lib/api";
+import { exportMatchResultsAsCSV } from "@/lib/csvUtils";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -245,6 +246,28 @@ export default function ResultsPage() {
               <option value={0.75}>Score ≥ 75%</option>
               <option value={0.9}>Score ≥ 90%</option>
             </select>
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Download size={14} />}
+              onClick={() => {
+                if (selectedPatient && filtered.length > 0) {
+                  exportMatchResultsAsCSV(
+                    {
+                      display_id: selectedPatient.display_id || selectedPatient._id,
+                      age: selectedPatient.demographics?.age,
+                      gender: selectedPatient.demographics?.gender,
+                      primary_condition: selectedPatient.primary_condition,
+                      medications_count: selectedPatient.medications_count,
+                      lab_values_count: selectedPatient.lab_values_count,
+                    },
+                    filtered as any
+                  );
+                }
+              }}
+            >
+              Export CSV
+            </Button>
             <span className="text-xs text-text-muted ml-auto">{filtered.length} results</span>
           </motion.div>
 

@@ -38,7 +38,8 @@ const SAMPLE_CSV_ROWS = [
 ];
 
 function parseCsvPreview(text: string): string[][] {
-  const lines = text.trim().split("\n").slice(0, 6);
+  // Parse ALL rows from CSV (no limit)
+  const lines = text.trim().split("\n");
   return lines.map((line) =>
     line.split(",").map((cell) => cell.trim().replace(/^"|"$/g, ""))
   );

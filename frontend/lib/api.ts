@@ -240,6 +240,19 @@ export async function uploadPatient(patientData: Record<string, unknown>): Promi
   });
 }
 
+export async function deletePatient(patientId: string): Promise<{ success: boolean; data: { deleted_patient_id: string }; message: string }> {
+  return apiFetch(`/api/patients/${patientId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function bulkDeletePatients(patientIds: string[]): Promise<{ success: boolean; data: { deleted_count: number; requested_count: number }; message: string }> {
+  return apiFetch('/api/patients/bulk-delete', {
+    method: 'POST',
+    body: JSON.stringify(patientIds),
+  });
+}
+
 export async function findMyMatches(patientId: string): Promise<{ success: boolean; data: MatchResult[]; message: string }> {
   return apiFetch(`/api/patients/find-my-matches?patient_id=${patientId}`, {
     method: 'POST',

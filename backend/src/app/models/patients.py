@@ -8,41 +8,42 @@ from .base import BaseDocument, GeoPoint, MedicationStatus, utc_now
 
 class Demographics(BaseDocument):
     """Patient demographics"""
-    age: int = Field(..., ge=0, le=150, description="Age in years")
-    gender: str = Field(..., description="Gender (male, female, other)")
-    location: GeoPoint = Field(..., description="Geographic location (GeoJSON Point)")
+    age: Optional[int] = Field(default=None, ge=0, le=150, description="Age in years")
+    gender: Optional[str] = Field(default=None, description="Gender (male, female, other)")
+    location: Optional[GeoPoint] = Field(default=None, description="Geographic location (GeoJSON Point)")
+    notes: Optional[str] = Field(default=None, description="Additional demographic notes")
 
 
 class Condition(BaseDocument):
     """Medical condition"""
     name: str = Field(..., description="Condition name")
-    icd10: str = Field(..., description="ICD-10 code")
-    onset: datetime = Field(..., description="Onset date")
+    icd10: Optional[str] = Field(default=None, description="ICD-10 code")
+    onset: Optional[datetime] = Field(default=None, description="Onset date")
 
 
 class Medication(BaseDocument):
     """Current medication"""
     name: str = Field(..., description="Medication name")
-    dosage: str = Field(..., description="Dosage (e.g., 500mg)")
-    status: MedicationStatus = Field(default=MedicationStatus.ACTIVE, description="Medication status")
+    dosage: Optional[str] = Field(default=None, description="Dosage (e.g., 500mg)")
+    status: Optional[str] = Field(default="active", description="Medication status")
 
 
 class LabValue(BaseDocument):
     """Lab test result"""
     name: str = Field(..., description="Lab test name (e.g., HbA1c)")
-    value: float = Field(..., description="Test value")
-    unit: str = Field(..., description="Unit of measurement")
-    date: datetime = Field(..., description="Test date")
+    value: Optional[float] = Field(default=None, description="Test value")
+    unit: Optional[str] = Field(default=None, description="Unit of measurement")
+    date: Optional[datetime] = Field(default=None, description="Test date")
 
 
 class Patient(BaseDocument):
     """Patient document"""
-    display_id: str = Field(..., description="Patient display ID (e.g., PT-0042)")
-    demographics: Demographics = Field(..., description="Demographic information")
+    display_id: Optional[str] = Field(default=None, description="Patient display ID (e.g., PT-0042)")
+    demographics: Optional[Demographics] = Field(default=None, description="Demographic information")
     conditions: List[Condition] = Field(default=[], description="Medical conditions")
     medications: List[Medication] = Field(default=[], description="Current medications")
     lab_values: List[LabValue] = Field(default=[], description="Lab test results")
-    clinical_notes_text: str = Field(default="", description="Unstructured clinical notes")
+    clinical_notes_text: Optional[str] = Field(default=None, description="Unstructured clinical notes")
     embedding: List[float] = Field(default=[], description="Vector embedding for semantic search")
 
     class Config:

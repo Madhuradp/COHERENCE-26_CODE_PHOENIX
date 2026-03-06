@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Users, Filter, Search, Download, CheckCircle2 } from "lucide-react";
+import { Users, Filter, Search, Download, CheckCircle2, Trash2 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Table, Badge } from "@/components/ui/Table";
 import { DatasetUploader } from "@/components/upload/DatasetUploader";
-import { listPatients, uploadPatient, type Patient } from "@/lib/api";
+import { listPatients, uploadPatient, deletePatient, bulkDeletePatients, type Patient } from "@/lib/api";
 import { transformPatientBatch } from "@/lib/transformPatientData";
+import { exportPatientsAsCSV } from "@/lib/csvUtils";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -27,6 +28,9 @@ export default function PatientsPage() {
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadCancelled, setUploadCancelled] = useState(false);
+  const [selectedPatients, setSelectedPatients] = useState<Set<string>>(new Set());
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     listPatients()
@@ -42,6 +46,48 @@ export default function PatientsPage() {
     return id.includes(s) || condition.includes(s);
   });
 
+  const handleSelectPatient = (patientId: string) => {
+    const newSelected = new Set(selectedPatients);
+    if (newSelected.has(patientId)) {
+      newSelected.delete(patientId);
+    } else {
+      newSelected.add(patientId);
+    }
+    setSelectedPatients(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedPatients.size === filtered.length) {
+      setSelectedPatients(new Set());
+    } else {
+      setSelectedPatients(new Set(filtered.map((p) => p._id)));
+    }
+  };
+
+  const handleDeleteSingle = async (patientId: string) => {
+    try {
+      await deletePatient(patientId);
+      setPatients(patients.filter((p) => p._id !== patientId));
+      setSelectedPatients(new Set(Array.from(selectedPatients).filter((id) => id !== patientId)));
+      setDeleteConfirm(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete patient");
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedPatients.size === 0) return;
+
+    try {
+      await bulkDeletePatients(Array.from(selectedPatients));
+      setPatients(patients.filter((p) => !selectedPatients.has(p._id)));
+      setSelectedPatients(new Set());
+      setDeleteConfirm(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete patients");
+    }
+  };
+
   const handleUpload = async (_file: File, preview: string[][]) => {
     if (preview.length < 2) return;
     const headers = preview[0];
@@ -53,6 +99,7 @@ export default function PatientsPage() {
     }
 
     setIsUploading(true);
+    setUploadCancelled(false);
     setUploadProgress(0);
     setUploadStatus(`Uploading 0/${rows.length} records...`);
 
@@ -64,6 +111,13 @@ export default function PatientsPage() {
 
     // Upload each patient with progress tracking
     for (let idx = 0; idx < transformedPatients.length; idx++) {
+      // Check if upload was cancelled
+      if (uploadCancelled) {
+        setIsUploading(false);
+        setUploadStatus(`Upload cancelled. ${successCount} records uploaded, ${failureCount} failed.`);
+        return;
+      }
+
       try {
         await uploadPatient(transformedPatients[idx]);
         successCount++;
@@ -92,6 +146,25 @@ export default function PatientsPage() {
   };
 
   const columns = [
+    {
+      key: "select",
+      header: (
+        <input
+          type="checkbox"
+          checked={selectedPatients.size === filtered.length && filtered.length > 0}
+          onChange={handleSelectAll}
+          className="w-4 h-4 cursor-pointer"
+        />
+      ),
+      render: (_v: unknown, row: Record<string, unknown>) => (
+        <input
+          type="checkbox"
+          checked={selectedPatients.has(row._id as string)}
+          onChange={() => handleSelectPatient(row._id as string)}
+          className="w-4 h-4 cursor-pointer"
+        />
+      ),
+    },
     {
       key: "_id",
       header: "Patient ID",
@@ -183,6 +256,19 @@ export default function PatientsPage() {
         );
       },
     },
+    {
+      key: "actions",
+      header: "Action",
+      render: (_v: unknown, row: Record<string, unknown>) => (
+        <button
+          onClick={() => setDeleteConfirm(row._id as string)}
+          className="p-1.5 rounded-lg hover:bg-red-100 text-red-500 transition-colors"
+          title="Delete patient"
+        >
+          <Trash2 size={16} />
+        </button>
+      ),
+    },
   ];
 
   return (
@@ -202,7 +288,16 @@ export default function PatientsPage() {
             {patients.length.toLocaleString()} records · Upload or manage datasets
           </p>
         </div>
-        <Button variant="secondary" size="sm" leftIcon={<Download size={15} />}>
+        <Button
+          variant="secondary"
+          size="sm"
+          leftIcon={<Download size={15} />}
+          onClick={() => {
+            if (patients.length > 0) {
+              exportPatientsAsCSV(patients);
+            }
+          }}
+        >
           Export CSV
         </Button>
       </motion.div>
@@ -211,33 +306,150 @@ export default function PatientsPage() {
       <motion.div variants={itemVariants}>
         <Card>
           <DatasetUploader onUpload={handleUpload} />
-          {isUploading && (
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-text-muted">Uploading patients...</span>
-                <span className="text-sm font-semibold text-brand-purple">{uploadProgress}%</span>
-              </div>
-              <div className="w-full bg-surface-muted rounded-full h-2 overflow-hidden">
-                <motion.div
-                  className="bg-brand-purple h-full rounded-full"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${uploadProgress}%` }}
-                  transition={{ duration: 0.3 }}
-                />
-              </div>
-            </div>
-          )}
           {uploadStatus && !isUploading && (
-            <div className="mt-3 flex items-center gap-2 text-sm text-green-600">
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-3 flex items-center gap-2 text-sm text-green-600"
+            >
               <CheckCircle2 size={15} /> {uploadStatus}
-            </div>
+            </motion.div>
           )}
         </Card>
       </motion.div>
 
+      {/* Upload Progress Modal */}
+      {isUploading && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full mx-4"
+          >
+            <div className="text-center space-y-6">
+              {/* Icon Animation */}
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                className="w-16 h-16 rounded-full bg-brand-purple-light flex items-center justify-center mx-auto"
+              >
+                <CheckCircle2 size={28} className="text-brand-purple" />
+              </motion.div>
+
+              {/* Title */}
+              <div>
+                <h3 className="text-lg font-bold text-text-primary mb-2">
+                  Uploading Patient Data
+                </h3>
+                <p className="text-sm text-text-muted">
+                  Processing medical records for clinical trial matching...
+                </p>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                    Progress
+                  </span>
+                  <span className="text-sm font-bold text-brand-purple">{uploadProgress}%</span>
+                </div>
+                <div className="w-full bg-surface-muted rounded-full h-3 overflow-hidden">
+                  <motion.div
+                    className="bg-gradient-to-r from-brand-purple to-brand-blue h-full rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${uploadProgress}%` }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                  />
+                </div>
+              </div>
+
+              {/* Status Message */}
+              <div className="bg-surface-muted rounded-xl p-4">
+                <p className="text-sm text-text-primary font-medium">{uploadStatus}</p>
+              </div>
+
+              {/* Info Box */}
+              <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
+                <p className="text-xs text-blue-700 text-center">
+                  ✓ Conditions, medications, and lab values are being extracted and stored
+                  for trial matching
+                </p>
+              </div>
+
+              {/* Cancel Button */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setUploadCancelled(true)}
+                className="w-full !text-red-500 hover:!bg-red-50"
+              >
+                Cancel Upload
+              </Button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
       {error && (
         <motion.div variants={itemVariants} className="px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">
           {error}
+        </motion.div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {deleteConfirm && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setDeleteConfirm(null)}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-xl p-6 max-w-md w-full mx-4"
+          >
+            <h3 className="text-lg font-bold text-text-primary mb-2">
+              Delete {deleteConfirm === "bulk" ? selectedPatients.size + " patient(s)" : "Patient"}?
+            </h3>
+            <p className="text-sm text-text-muted mb-6">
+              {deleteConfirm === "bulk"
+                ? `This will permanently delete ${selectedPatients.size} patient record(s) and all associated match results.`
+                : "This will permanently delete this patient record and all associated match results."}
+            </p>
+            <div className="flex gap-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setDeleteConfirm(null)}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  if (deleteConfirm === "bulk") {
+                    handleBulkDelete();
+                  } else {
+                    handleDeleteSingle(deleteConfirm);
+                  }
+                }}
+                className="flex-1 !text-red-500 hover:!bg-red-50"
+              >
+                Delete
+              </Button>
+            </div>
+          </motion.div>
         </motion.div>
       )}
 
@@ -257,6 +469,17 @@ export default function PatientsPage() {
           <Button variant="secondary" size="sm" leftIcon={<Filter size={14} />}>
             Filters
           </Button>
+          {selectedPatients.size > 0 && (
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Trash2 size={14} />}
+              onClick={() => setDeleteConfirm("bulk")}
+              className="!text-red-500 hover:!bg-red-50"
+            >
+              Delete ({selectedPatients.size})
+            </Button>
+          )}
           <span className="text-xs text-text-muted ml-auto">
             Showing {filtered.length} of {patients.length} patients
           </span>

@@ -7,11 +7,19 @@ class PatientService:
 
     def get_all_patients(self, limit=20):
         # Return lightweight list for dropdowns
+        # ALWAYS include all medical data: conditions, medications, lab_values (NEVER redacted)
         patients = list(self.db.db.patients.find(
-            {}, 
-            {"display_id": 1, "demographics": 1, "conditions": 1}
+            {},
+            {
+                "display_id": 1,
+                "demographics": 1,
+                "conditions": 1,
+                "medications": 1,
+                "lab_values": 1,
+                "_id": 1
+            }
         ).limit(limit))
-        
+
         # Convert ObjectId to string
         for p in patients:
             p['_id'] = str(p['_id'])
