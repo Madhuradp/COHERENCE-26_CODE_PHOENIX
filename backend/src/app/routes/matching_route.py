@@ -50,13 +50,14 @@ async def run_match_pipeline(patient_id: str, state: str = "Maharashtra", curren
         matching_analysis = matcher.match_patient_to_trial(patient, trial)
 
         # Enhance match with detailed information
+        overall_eligibility = matching_analysis["eligibility_evaluation"]["overall_eligibility"]
         enhanced_match = {
             # Trial Information
             "nct_id": trial.get("nct_id"),
             "title": trial.get("title"),
             "brief_title": trial.get("brief_title"),
             "phase": trial.get("phase"),
-            "status": trial.get("status"),
+            "trial_status": trial.get("status"),  # renamed to avoid conflict
             "sponsor": trial.get("sponsor"),
             "conditions": trial.get("conditions", []),
             "locations": trial.get("locations", []),
@@ -68,7 +69,8 @@ async def run_match_pipeline(patient_id: str, state: str = "Maharashtra", curren
             # Eligibility Evaluation
             "inclusion_criteria": matching_analysis["eligibility_evaluation"]["inclusion_criteria"],
             "exclusion_criteria": matching_analysis["eligibility_evaluation"]["exclusion_criteria"],
-            "overall_eligibility": matching_analysis["eligibility_evaluation"]["overall_eligibility"],
+            "overall_eligibility": overall_eligibility,
+            "status": overall_eligibility,  # Frontend-friendly field
 
             # Detailed Mapping Analysis
             "mapping_analysis": matching_analysis["mapping"],

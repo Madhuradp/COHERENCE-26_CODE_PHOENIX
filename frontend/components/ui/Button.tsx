@@ -44,6 +44,7 @@ export function Button({
   children,
   className,
   disabled,
+  onClick,
   ...props
 }: ButtonProps) {
   return (
@@ -58,6 +59,7 @@ export function Button({
         className
       )}
       disabled={disabled || loading}
+      onClick={onClick}
       {...(props as React.ButtonHTMLAttributes<HTMLButtonElement>)}
     >
       {loading ? (

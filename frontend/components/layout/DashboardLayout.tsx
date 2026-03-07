@@ -23,15 +23,13 @@ const clinicianNavItems = [
   { href: "/dashboard/trials", icon: FlaskConical, label: "Clinical Trials" },
   { href: "/dashboard/matching", icon: GitCompare, label: "Trial Matching" },
   { href: "/dashboard/results", icon: ClipboardList, label: "Results" },
-  { href: "/dashboard/testing", icon: Beaker, label: "Testing" },
-  { href: "/dashboard/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/dashboard/settings", icon: Settings, label: "Settings" },
 ];
 
 function getClinicianName(user: UserResponse | null): string {
   if (!user) return "Researcher";
   if (user.researcher_profile?.full_name) return user.researcher_profile.full_name;
-  return user.email.split("@")[0];
+  return user.email ? user.email.split("@")[0] : "Researcher";
 }
 
 function getRoleLabel(user: UserResponse | null): string {

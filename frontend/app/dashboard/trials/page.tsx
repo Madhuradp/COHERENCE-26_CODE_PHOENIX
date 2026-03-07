@@ -27,6 +27,9 @@ const statusVariant: Record<string, "green" | "blue" | "gray" | "orange"> = {
 };
 
 function TrialCard({ trial, index }: { trial: Trial; index: number }) {
+  const [expandedExclusions, setExpandedExclusions] = useState(false);
+  const hasExclusions = trial.eligibility?.raw_text && trial.eligibility.raw_text.toLowerCase().includes('exclusion');
+
   return (
     <motion.div
       key={trial.nct_id || trial._id}
@@ -49,6 +52,8 @@ function TrialCard({ trial, index }: { trial: Trial; index: number }) {
           <h3 className="font-semibold text-text-primary text-sm leading-snug">
             {trial.title || trial.brief_title || "—"}
           </h3>
+
+          {/* Main eligibility info */}
           <div className="flex flex-wrap gap-4 mt-2.5 text-xs text-text-muted">
             {trial.conditions?.[0] && (
               <span>Condition: <strong className="text-text-primary">{trial.conditions[0]}</strong></span>
@@ -69,6 +74,33 @@ function TrialCard({ trial, index }: { trial: Trial; index: number }) {
               <span>Age: <strong className="text-text-primary">{trial.eligibility.min_age ?? "?"} – {trial.eligibility.max_age ?? "?"} yrs</strong></span>
             )}
           </div>
+
+          {/* Exclusion Criteria Section */}
+          {hasExclusions && (
+            <div className="mt-3 pt-3 border-t border-surface-border">
+              <button
+                type="button"
+                onClick={() => setExpandedExclusions(!expandedExclusions)}
+                className="flex items-center gap-2 text-xs font-semibold text-red-600 hover:text-red-700 transition-colors cursor-pointer"
+              >
+                <span>⚠️ Exclusion Criteria</span>
+                <span className={`transform transition-transform duration-200 ${expandedExclusions ? 'rotate-180' : ''}`}>▼</span>
+              </button>
+              {expandedExclusions && trial.eligibility?.raw_text && (
+                <div className="mt-2 p-3 rounded-lg bg-red-50 border border-red-200">
+                  <p className="text-xs text-red-700 leading-relaxed whitespace-pre-wrap break-words">
+                    {trial.eligibility.raw_text
+                      .split('\n')
+                      .filter((line: string) => line.trim().length > 0)
+                      .join('\n')}
+                  </p>
+                </div>
+              )}
+              {!expandedExclusions && trial.eligibility?.raw_text && (
+                <p className="text-xs text-red-600 mt-2">Click to view full exclusion criteria</p>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </motion.div>
