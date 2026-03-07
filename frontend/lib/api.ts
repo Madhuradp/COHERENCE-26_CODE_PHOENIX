@@ -127,6 +127,7 @@ export interface MatchResult {
   confidence_score: number;
   analysis?: MatchAnalysis;
   distance_km?: number;
+  conditions?: string[];
   // Detailed eligibility breakdown
   overall_eligibility?: 'ELIGIBLE' | 'INELIGIBLE' | 'REVIEW_NEEDED';
   inclusion_criteria?: Array<{

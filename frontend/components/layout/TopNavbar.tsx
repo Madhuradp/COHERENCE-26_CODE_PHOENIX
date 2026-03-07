@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Bell, ChevronDown, Menu, LogOut, User, Settings } from "lucide-react";
+import { Search, Bell, ChevronDown, Menu, LogOut, User } from "lucide-react";
 import Link from "next/link";
 
 export interface NavbarUser {
@@ -10,7 +10,7 @@ export interface NavbarUser {
   role: string;
   initials: string;
   email: string;
-  settingsHref: string;
+  settingsHref?: string;
 }
 
 export interface NavbarNotification {
@@ -163,21 +163,18 @@ export function TopNavbar({
                   <p className="text-xs text-text-muted">{user.email}</p>
                 </div>
                 <div className="p-1.5">
-                  <Link
-                    href={user.settingsHref}
-                    onClick={() => setAvatarOpen(false)}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-text-secondary hover:bg-surface-muted transition-colors"
-                  >
-                    <User size={15} /> Profile
-                  </Link>
-                  <Link
-                    href={user.settingsHref}
-                    onClick={() => setAvatarOpen(false)}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-text-secondary hover:bg-surface-muted transition-colors"
-                  >
-                    <Settings size={15} /> Settings
-                  </Link>
-                  <hr className="my-1 border-surface-border" />
+                  {user.settingsHref && (
+                    <>
+                      <Link
+                        href={user.settingsHref}
+                        onClick={() => setAvatarOpen(false)}
+                        className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-text-secondary hover:bg-surface-muted transition-colors"
+                      >
+                        <User size={15} /> Profile
+                      </Link>
+                      <hr className="my-1 border-surface-border" />
+                    </>
+                  )}
                   <Link
                     href="/login"
                     className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-red-500 hover:bg-red-50 transition-colors"

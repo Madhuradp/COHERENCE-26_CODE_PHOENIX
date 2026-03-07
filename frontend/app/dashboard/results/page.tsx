@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ClipboardList, Users, Star, FlaskConical, Search, CheckCircle, X, ChevronDown, Download,
+  ClipboardList, Users, Star, FlaskConical, Search, CheckCircle, X, ChevronDown, Download, Clock, Zap,
 } from "lucide-react";
 import { StatCard } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -27,6 +27,16 @@ function getScoreBadge(score: number): "green" | "blue" | "orange" | "red" {
   return "red";
 }
 
+interface SearchHistory {
+  id: string;
+  type: "sync" | "live";
+  condition: string;
+  phase?: string;
+  timestamp: Date;
+  resultCount: number;
+  trials?: Array<{ nct_id: string; title: string; phase?: string; conditions?: string[]; locations?: any[] }>;
+}
+
 export default function ResultsPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
@@ -38,12 +48,28 @@ export default function ResultsPage() {
   const [patientsLoading, setPatientsLoading] = useState(true);
   const [matchesLoading, setMatchesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchHistory, setSearchHistory] = useState<SearchHistory[]>([]);
+  const [selectedHistory, setSelectedHistory] = useState<SearchHistory | null>(null);
 
   useEffect(() => {
     listPatients()
       .then((res) => setPatients(res.data))
       .catch((e) => setError(e.message))
       .finally(() => setPatientsLoading(false));
+
+    // Load search history from localStorage
+    const stored = localStorage.getItem("trial_search_history");
+    if (stored) {
+      try {
+        const history = JSON.parse(stored).map((h: any) => ({
+          ...h,
+          timestamp: new Date(h.timestamp)
+        }));
+        setSearchHistory(history);
+      } catch (e) {
+        console.error("Failed to load search history:", e);
+      }
+    }
   }, []);
 
   const loadMatches = async (patient: Patient) => {
@@ -51,6 +77,7 @@ export default function ResultsPage() {
     setDropdownOpen(false);
     setMatchesLoading(true);
     setSelectedMatch(null);
+    setSelectedHistory(null);
     try {
       const res = await getMatchResults(patient._id);
       setMatches(res.data);
@@ -61,14 +88,29 @@ export default function ResultsPage() {
     }
   };
 
+  const handleHistoryClick = (history: SearchHistory) => {
+    setSelectedHistory(history);
+    setSelectedMatch(null);
+  };
+
   const filtered = matches.filter((m) => {
     const s = search.toLowerCase();
     const score = m.confidence_score;
+
+    // If a history item is selected, filter by condition
+    if (selectedHistory) {
+      const conditionMatch = (m.conditions || []).some((c: string) =>
+        c.toLowerCase().includes(selectedHistory.condition.toLowerCase())
+      );
+      if (!conditionMatch) return false;
+    }
+
     return (
       score >= minScore &&
       ((m.nct_id || "").toLowerCase().includes(s) ||
         (m.status || "").toLowerCase().includes(s) ||
-        (m.analysis?.summary || "").toLowerCase().includes(s))
+        (m.analysis?.summary || "").toLowerCase().includes(s) ||
+        (m.title || "").toLowerCase().includes(s))
     );
   });
 
@@ -144,6 +186,98 @@ export default function ResultsPage() {
       {error && (
         <motion.div variants={itemVariants} className="px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">
           {error}
+        </motion.div>
+      )}
+
+      {/* Search History */}
+      {searchHistory.length > 0 && (
+        <motion.div variants={itemVariants}>
+          <div className="bg-white rounded-2xl shadow-card p-5">
+            <h2 className="text-sm font-semibold text-text-primary mb-4 flex items-center gap-2">
+              <Clock size={16} className="text-brand-purple" />
+              Search History ({searchHistory.length})
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {searchHistory.map((history) => (
+                <motion.button
+                  key={history.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  onClick={() => handleHistoryClick(history)}
+                  className={`p-3 rounded-lg border transition-all text-left ${
+                    selectedHistory?.id === history.id
+                      ? "bg-brand-purple/10 border-brand-purple shadow-md"
+                      : "bg-surface-muted border-surface-border hover:border-brand-purple"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm text-text-primary truncate">
+                        {history.condition}
+                      </p>
+                      <p className="text-xs text-text-muted mt-1">
+                        {history.timestamp.toLocaleString()}
+                      </p>
+                    </div>
+                    <Badge variant={history.type === "sync" ? "green" : "blue"}>
+                      {history.type === "sync" ? "🟢 Synced" : "🔵 Live"}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    {history.phase && (
+                      <Badge variant="purple">{history.phase}</Badge>
+                    )}
+                    <span className="text-text-muted font-medium">{history.resultCount} results</span>
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Search History Results */}
+      {selectedHistory && selectedHistory.trials && selectedHistory.trials.length > 0 && !selectedPatient && (
+        <motion.div variants={itemVariants}>
+          <div className="bg-white rounded-2xl shadow-card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                <FlaskConical size={16} className="text-brand-purple" />
+                Results for "{selectedHistory.condition}"
+                {selectedHistory.trials.length > 0 && (
+                  <span className="text-xs font-normal text-text-muted">({selectedHistory.trials.length})</span>
+                )}
+              </h2>
+              <button
+                onClick={() => setSelectedHistory(null)}
+                className="p-1.5 rounded-lg hover:bg-surface-muted text-text-muted transition-colors"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {selectedHistory.trials.map((trial) => (
+                <motion.div
+                  key={trial.nct_id}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="p-3 rounded-lg bg-surface-muted border border-surface-border hover:border-brand-purple transition-all cursor-pointer"
+                >
+                  <p className="font-mono text-xs font-bold text-brand-purple mb-1">{trial.nct_id}</p>
+                  <p className="text-sm font-medium text-text-primary mb-1 line-clamp-2">{trial.title}</p>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {trial.phase && <Badge variant="blue">{trial.phase}</Badge>}
+                    {(trial.conditions || []).slice(0, 1).map((c) => (
+                      <Badge key={c} variant="purple">{c}</Badge>
+                    ))}
+                    {trial.locations && trial.locations.length > 0 && (
+                      <span className="text-xs text-text-muted">📍 {trial.locations.length} locations</span>
+                    )}
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
         </motion.div>
       )}
 
@@ -225,6 +359,28 @@ export default function ResultsPage() {
       {/* Filters + table */}
       {selectedPatient && (
         <>
+          {selectedHistory && (
+            <motion.div
+              variants={itemVariants}
+              className="p-3 rounded-lg bg-brand-purple/5 border border-brand-purple/20 flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-text-primary">
+                  Filtering by: <span className="font-semibold text-brand-purple">{selectedHistory.condition}</span>
+                </span>
+                {selectedHistory.phase && (
+                  <Badge variant="purple">{selectedHistory.phase}</Badge>
+                )}
+              </div>
+              <button
+                onClick={() => setSelectedHistory(null)}
+                className="p-1 rounded hover:bg-brand-purple/10 text-text-muted hover:text-text-primary transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </motion.div>
+          )}
+
           <motion.div variants={itemVariants} className="flex items-center gap-3 flex-wrap">
             <div className="relative flex-1 min-w-[180px] max-w-xs">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />

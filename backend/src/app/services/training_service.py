@@ -516,3 +516,344 @@ class TrainingService:
             "feature_names": self.feature_names,
             "scaler_fitted": hasattr(self.scaler, 'mean_') and self.scaler.mean_ is not None
         }
+
+    def load_training_data_with_combinations(self) -> Tuple[pd.DataFrame, pd.Series]:
+        """
+        Load training data from MongoDB with patient-trial combinations.
+        Implements the simpler model approach with bio-health features.
+
+        Returns:
+            Tuple of (features_dataframe, labels_series)
+        """
+        logger.info("Loading training data with patient-trial combinations...")
+
+        # Load patients and trials
+        patients_data = list(self.db.patients.find())
+        trials_data = list(self.db.trials.find())
+
+        if not patients_data or not trials_data:
+            logger.warning(f"Insufficient data: {len(patients_data)} patients, {len(trials_data)} trials")
+            return pd.DataFrame(), pd.Series()
+
+        logger.info(f"Creating combinations from {len(patients_data)} patients × {len(trials_data)} trials")
+
+        # Get existing match labels from database
+        matches = {(m.get("patient_id"), m.get("nct_id")): m.get("status", "INELIGIBLE")
+                   for m in self.db.matches.find()}
+
+        data_rows = []
+
+        # Create patient-trial combinations
+        for patient in patients_data:
+            for trial in trials_data:
+                try:
+                    patient_id = patient.get("_id")
+                    nct_id = trial.get("nct_id")
+
+                    # Get label from matches or default based on basic eligibility
+                    label_status = matches.get((patient_id, nct_id))
+                    if label_status is None:
+                        # Default: check basic age compatibility
+                        patient_age = patient.get("demographics", {}).get("age")
+                        trial_min = trial.get("eligibility", {}).get("min_age")
+                        trial_max = trial.get("eligibility", {}).get("max_age")
+
+                        if patient_age is None:
+                            continue
+
+                        age_ok = True
+                        if trial_min and patient_age < trial_min:
+                            age_ok = False
+                        if trial_max and patient_age > trial_max:
+                            age_ok = False
+
+                        label_status = "ELIGIBLE" if age_ok else "INELIGIBLE"
+
+                    # Engineer simplified features with biological metrics
+                    features = self._engineer_combined_features(patient, trial, label_status)
+                    if features:
+                        data_rows.append(features)
+
+                except Exception as e:
+                    logger.debug(f"Error processing combination: {e}")
+                    continue
+
+        if not data_rows:
+            logger.error("No valid training combinations generated")
+            return pd.DataFrame(), pd.Series()
+
+        df = pd.DataFrame(data_rows)
+        labels = df.pop("eligible").astype(int)
+
+        self.feature_names = df.columns.tolist()
+
+        logger.info(f"Generated {len(df)} training samples with {len(self.feature_names)} features")
+        logger.info(f"Class distribution:\n{labels.value_counts()}")
+
+        return df, labels
+
+    def _engineer_combined_features(
+        self,
+        patient: Dict[str, Any],
+        trial: Dict[str, Any],
+        label_status: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Engineer simplified features for patient-trial matching.
+        Includes biological/health metrics similar to the provided script.
+
+        Args:
+            patient: Patient document
+            trial: Trial document
+            label_status: ELIGIBLE or INELIGIBLE label
+
+        Returns:
+            Dictionary of features or None
+        """
+        try:
+            features = {}
+
+            # ===== DEMOGRAPHIC FEATURES =====
+            demographics = patient.get("demographics", {})
+            age = demographics.get("age")
+            gender = demographics.get("gender", "unknown")
+
+            if age is None:
+                return None
+
+            features["age"] = age
+
+            # Encode gender
+            gender_map = {"male": 1, "female": 0, "other": 0.5, "unknown": 0.5}
+            features["gender_encoded"] = gender_map.get(str(gender).lower(), 0.5)
+
+            # ===== HEALTH METRICS FROM LAB VALUES =====
+            # Extract biological values from lab_values array
+            lab_values = {
+                lab.get("name", "").lower(): lab.get("value")
+                for lab in patient.get("lab_values", [])
+                if lab.get("value") is not None
+            }
+
+            # Common health metrics
+            features["bmi"] = lab_values.get("bmi", 25)  # Default normal BMI
+            features["hba1c"] = lab_values.get("hba1c", 5.5)  # Default normal
+            features["cholesterol"] = lab_values.get("cholesterol", 200)  # Default
+            features["glucose"] = lab_values.get("glucose", 100)  # Default
+            features["bp_systolic"] = lab_values.get("bp_systolic", 120)  # Default
+            features["bp_diastolic"] = lab_values.get("bp_diastolic", 80)  # Default
+
+            # ===== SMOKING STATUS =====
+            smoking_map = {"yes": 1, "no": 0, "former": 0.5, "unknown": 0.5}
+            smoking = next(
+                (m.get("status", "unknown").lower() for m in patient.get("medications", [])
+                 if "smoking" in m.get("name", "").lower()),
+                "unknown"
+            )
+            features["smoking_status_encoded"] = smoking_map.get(smoking, 0.5)
+
+            # ===== TRIAL CHARACTERISTICS =====
+            features["phase_encoded"] = self._encode_phase(trial.get("phase"))
+            features["trial_phase"] = features["phase_encoded"]  # Duplicate for compatibility
+
+            # ===== AGE COMPATIBILITY =====
+            trial_eligibility = trial.get("eligibility", {})
+            trial_min_age = trial_eligibility.get("min_age", 0)
+            trial_max_age = trial_eligibility.get("max_age", 120)
+
+            features["trial_min_age"] = trial_min_age
+            features["trial_max_age"] = trial_max_age
+            features["age_in_range"] = 1 if (trial_min_age <= age <= trial_max_age) else 0
+
+            # ===== CONDITION MATCHING =====
+            patient_conditions = set(
+                c.get("name", "").lower()
+                for c in patient.get("conditions", [])
+                if c.get("name")
+            )
+            trial_conditions = set(
+                c.lower() for c in trial.get("conditions", [])
+            )
+
+            condition_match = 1 if len(patient_conditions & trial_conditions) > 0 else 0
+            features["condition_match"] = condition_match
+            features["num_conditions"] = len(patient_conditions)
+
+            # ===== MEDICATIONS =====
+            features["num_medications"] = len(patient.get("medications", []))
+
+            # ===== LABEL =====
+            features["eligible"] = 1 if label_status == "ELIGIBLE" else 0
+
+            return features
+
+        except Exception as e:
+            logger.warning(f"Error engineering combined features: {e}")
+            return None
+
+    def train_with_combinations(
+        self,
+        test_size: float = 0.2,
+        random_state: int = 42,
+        save: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Train model using patient-trial combinations approach.
+        Implements the simplified Random Forest model from the provided script.
+
+        Args:
+            test_size: Fraction of data for testing
+            random_state: Random seed
+            save: Whether to save the model
+
+        Returns:
+            Training result dictionary with metrics
+        """
+        logger.info("Starting training with patient-trial combinations...")
+
+        # Load data with combinations
+        X, y = self.load_training_data_with_combinations()
+
+        if X.empty:
+            return {
+                "success": False,
+                "error": "No training data from combinations",
+                "metrics": {}
+            }
+
+        # Check class balance
+        if len(y.unique()) < 2:
+            logger.warning("Imbalanced training data - only one class present")
+            return {
+                "success": False,
+                "error": "Need both ELIGIBLE and INELIGIBLE samples",
+                "metrics": {}
+            }
+
+        # Handle missing values
+        X = X.fillna(X.mean(numeric_only=True))
+
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=y
+        )
+
+        # Scale features
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+
+        # Train Random Forest (from user's script)
+        self.model = RandomForestClassifier(
+            n_estimators=200,  # Increased from user's script
+            max_depth=10,
+            random_state=random_state,
+            n_jobs=-1,
+            class_weight="balanced"
+        )
+
+        logger.info(f"Training on {len(X_train)} combinations...")
+        self.model.fit(X_train_scaled, y_train)
+
+        # Evaluate
+        y_pred = self.model.predict(X_test_scaled)
+        y_pred_proba = self.model.predict_proba(X_test_scaled)[:, 1]
+
+        metrics = {
+            "train_accuracy": float(accuracy_score(y_train, self.model.predict(X_train_scaled))),
+            "test_accuracy": float(accuracy_score(y_test, y_pred)),
+            "precision": float(precision_score(y_test, y_pred, zero_division=0)),
+            "recall": float(recall_score(y_test, y_pred, zero_division=0)),
+            "f1": float(f1_score(y_test, y_pred, zero_division=0)),
+            "roc_auc": float(roc_auc_score(y_test, y_pred_proba)) if len(y_test.unique()) > 1 else 0.0,
+            "train_size": len(X_train),
+            "test_size": len(X_test),
+            "eligible_count": int(y_test.sum()),
+            "ineligible_count": int((1 - y_test).sum())
+        }
+
+        # Feature importance
+        if hasattr(self.model, "feature_importances_"):
+            feature_importance = sorted(
+                zip(self.feature_names, self.model.feature_importances_),
+                key=lambda x: x[1],
+                reverse=True
+            )
+            metrics["top_features"] = [
+                {"feature": fname, "importance": float(imp)}
+                for fname, imp in feature_importance[:10]
+            ]
+
+        logger.info(f"Training complete. Accuracy: {metrics['test_accuracy']:.4f}, F1: {metrics['f1']:.4f}")
+
+        # Save model
+        if save:
+            self.save_model()
+            logger.info(f"Model saved to {self.model_path}")
+
+        return {
+            "success": True,
+            "method": "patient_trial_combinations",
+            "model_type": self.model_type,
+            "metrics": metrics,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    def predict_patient_trial_matches(self, patient_id: str) -> Dict[str, Any]:
+        """
+        Predict matches for a specific patient against all trials.
+
+        Args:
+            patient_id: Patient ID to match against
+
+        Returns:
+            Dictionary with matches and scores
+        """
+        if not self.model:
+            if not self.load_model():
+                return {"success": False, "error": "Model not available"}
+
+        try:
+            patient = self.db.patients.find_one({"_id": patient_id})
+            if not patient:
+                return {"success": False, "error": "Patient not found"}
+
+            trials = list(self.db.trials.find())
+            predictions = []
+
+            for trial in trials:
+                features = self._engineer_combined_features(patient, trial, "ELIGIBLE")
+                if not features:
+                    continue
+
+                features.pop("eligible", None)
+                feature_vector = [features.get(fname, 0.0) for fname in self.feature_names]
+                X = np.array([feature_vector])
+                X_scaled = self.scaler.transform(X)
+
+                probability = self.model.predict_proba(X_scaled)[0][1]
+                prediction = int(self.model.predict(X_scaled)[0])
+
+                predictions.append({
+                    "nct_id": trial.get("nct_id"),
+                    "title": trial.get("title"),
+                    "prediction": prediction,
+                    "probability": float(probability),
+                    "eligible": probability > 0.5
+                })
+
+            # Sort by probability
+            predictions.sort(key=lambda x: x["probability"], reverse=True)
+
+            return {
+                "success": True,
+                "patient_id": patient_id,
+                "total_matches": len([p for p in predictions if p["eligible"]]),
+                "matches": predictions[:20]  # Top 20
+            }
+
+        except Exception as e:
+            logger.error(f"Error predicting matches: {e}")
+            return {"success": False, "error": str(e)}

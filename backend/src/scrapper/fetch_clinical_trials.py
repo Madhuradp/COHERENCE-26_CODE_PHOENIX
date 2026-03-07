@@ -406,6 +406,7 @@ class ClinicalTrialsFetcher:
     ) -> List[Dict[str, Any]]:
         """
         Fetch trials strictly from Maharashtra, India with optional filtering.
+        Includes all trial statuses for demo purposes.
 
         Args:
             condition: Medical condition e.g. "diabetes", "cancer"
@@ -418,7 +419,6 @@ class ClinicalTrialsFetcher:
         params: Dict[str, Any] = {
             "pageSize": min(limit, 1000),
             "query.locn": MAHARASHTRA_LOCATION_QUERY,
-            "filter.overallStatus": "RECRUITING"
         }
         if condition:
             params["query.cond"] = condition

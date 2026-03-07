@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { FlaskConical, RefreshCw, Search, Globe, Download, X, Clock, Zap, FileText, Users } from "lucide-react";
+import { FlaskConical, RefreshCw, Search, Globe, Download, X, Clock, Zap, FileText, Users, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Table";
 import { ProgressBar } from "@/components/ui/ProgressBar";
@@ -151,7 +152,76 @@ function TrialResultCard({
   );
 }
 
+interface EligibilityCheck {
+  ageEligible: boolean;
+  ageRange: string;
+  conditionMatch: boolean;
+  conditionName?: string;
+  reasons: string[];
+}
+
+function getEligibilityExplanation(patient: Patient, trial: Trial): EligibilityCheck {
+  const reasons: string[] = [];
+
+  // Age check
+  const patientAge = patient.demographics?.age;
+  const minAge = trial.eligibility?.min_age;
+  const maxAge = trial.eligibility?.max_age;
+  let ageEligible = true;
+  let ageRange = "Not specified";
+
+  if (minAge !== null && minAge !== undefined && patientAge !== null && patientAge !== undefined) {
+    if (patientAge < minAge) {
+      ageEligible = false;
+      reasons.push(`Age ${patientAge} is below minimum ${minAge}`);
+    } else {
+      reasons.push(`✓ Age ${patientAge} meets minimum ${minAge}`);
+    }
+  }
+
+  if (maxAge !== null && maxAge !== undefined && patientAge !== null && patientAge !== undefined) {
+    if (patientAge > maxAge) {
+      ageEligible = false;
+      reasons.push(`Age ${patientAge} exceeds maximum ${maxAge}`);
+    } else {
+      reasons.push(`✓ Age ${patientAge} within maximum ${maxAge}`);
+    }
+  }
+
+  if (minAge !== null && minAge !== undefined && maxAge !== null && maxAge !== undefined) {
+    ageRange = `${minAge}–${maxAge}`;
+  } else if (minAge !== null && minAge !== undefined) {
+    ageRange = `${minAge}+`;
+  } else if (maxAge !== null && maxAge !== undefined) {
+    ageRange = `Up to ${maxAge}`;
+  }
+
+  // Condition check
+  const patientConditions = (patient.conditions as any)?.map((c: any) => {
+    if (typeof c === 'string') return c.toLowerCase();
+    return c.name?.toLowerCase() || '';
+  }) || [];
+  const trialConditions = trial.conditions?.map(c => c.toLowerCase()) || [];
+  const conditionMatch = trialConditions.some(tc => patientConditions.some((pc: string) => pc.includes(tc) || tc.includes(pc)));
+  const matchedCondition = patientConditions.find((pc: string) => trialConditions.some(tc => tc.includes(pc) || pc.includes(tc)));
+
+  if (conditionMatch) {
+    reasons.push(`✓ Condition match: ${matchedCondition}`);
+  } else if (patientConditions.length > 0) {
+    reasons.push(`Patient condition: ${patientConditions[0]} (trial: ${trialConditions[0] || 'not specified'})`);
+  }
+
+  return {
+    ageEligible,
+    ageRange,
+    conditionMatch,
+    conditionName: matchedCondition,
+    reasons
+  };
+}
+
 export default function TrialsPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -241,6 +311,29 @@ export default function TrialsPage() {
       setSearchSessions((prev) => [newSession, ...prev]);
       setAllTrials((prev) => [...(trialsRes.data || []), ...prev]);
 
+      // Save to localStorage for results page history
+      const history = localStorage.getItem("trial_search_history");
+      const existingHistory = history ? JSON.parse(history) : [];
+      const updatedHistory = [
+        {
+          id: newSession.id,
+          type: "sync",
+          condition: syncCondition,
+          phase: syncPhase || undefined,
+          timestamp: newSession.timestamp.toISOString(),
+          resultCount: trialsRes.data?.length || 0,
+          trials: (trialsRes.data || []).map((t: Trial) => ({
+            nct_id: t.nct_id,
+            title: t.title,
+            phase: t.phase,
+            conditions: t.conditions,
+            locations: t.locations,
+          })),
+        },
+        ...existingHistory,
+      ].slice(0, 50);
+      localStorage.setItem("trial_search_history", JSON.stringify(updatedHistory));
+
       setSyncMsg(`✓ Synced ${res.count || 0} trials`);
       setRetryCount(0);
       setSyncCondition("");
@@ -276,6 +369,29 @@ export default function TrialsPage() {
       setSearchSessions((prev) => [newSession, ...prev]);
       setAllTrials((prev) => [...res.data, ...prev]);
 
+      // Save to localStorage for results page history
+      const history = localStorage.getItem("trial_search_history");
+      const existingHistory = history ? JSON.parse(history) : [];
+      const updatedHistory = [
+        {
+          id: newSession.id,
+          type: "live",
+          condition: liveCondition,
+          phase: livePhase || undefined,
+          timestamp: newSession.timestamp.toISOString(),
+          resultCount: res.data?.length || 0,
+          trials: (res.data || []).map((t: Trial) => ({
+            nct_id: t.nct_id,
+            title: t.title,
+            phase: t.phase,
+            conditions: t.conditions,
+            locations: t.locations,
+          })),
+        },
+        ...existingHistory,
+      ].slice(0, 50);
+      localStorage.setItem("trial_search_history", JSON.stringify(updatedHistory));
+
       setLiveCondition("");
       setLivePhase("");
     } catch (e: unknown) {
@@ -292,15 +408,28 @@ export default function TrialsPage() {
 
     try {
       const res = await listPatients();
+
+      if (!res.success || !res.data) {
+        setMatchingPatients([]);
+        setMatchingLoading(false);
+        return;
+      }
+
       // Filter patients by condition match
       const matchedPatients = res.data.filter(patient => {
-        const patientConditions = patient.conditions?.map(c => c.name.toLowerCase()) || [];
+        const patientConditions = (patient.conditions as any)?.map((c: any) => {
+          if (typeof c === 'string') return c.toLowerCase();
+          return c.name?.toLowerCase() || '';
+        }) || [];
         const trialConditions = trial.conditions?.map(c => c.toLowerCase()) || [];
-        return trialConditions.some(tc => patientConditions.some(pc => pc.includes(tc) || tc.includes(pc)));
+        return trialConditions.some(tc => patientConditions.some((pc: string) => pc.includes(tc) || tc.includes(pc)));
       });
+
       setMatchingPatients(matchedPatients.length > 0 ? matchedPatients : res.data.slice(0, 10));
     } catch (e: unknown) {
+      console.error('Error loading patients:', e);
       setError(e instanceof Error ? e.message : "Failed to load patients");
+      setMatchingPatients([]);
     } finally {
       setMatchingLoading(false);
     }
@@ -498,20 +627,35 @@ export default function TrialsPage() {
         {searchSessions.length > 0 && (
           <motion.div variants={itemVariants}>
             <div className="bg-white rounded-2xl shadow-card p-5 border border-surface-border">
-              <h3 className="font-bold text-text-primary text-sm mb-3 flex items-center gap-2">
+              <h3 className="font-bold text-text-primary text-sm mb-4 flex items-center gap-2">
                 <Clock size={16} className="text-brand-purple" />
                 Search History ({searchSessions.length})
               </h3>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {searchSessions.map((session) => (
                   <div
                     key={session.id}
-                    className="px-3 py-2 rounded-lg bg-surface-muted border border-surface-border text-xs flex items-center gap-2"
+                    className="p-3 rounded-lg bg-surface-muted border border-surface-border hover:border-brand-purple transition-all"
                   >
-                    <span className={`w-2 h-2 rounded-full ${session.type === "sync" ? "bg-green-500" : "bg-blue-500"}`} />
-                    <span className="font-semibold">{session.condition}</span>
-                    {session.phase && <Badge variant="purple">{session.phase}</Badge>}
-                    <span className="text-text-muted">({session.results.length})</span>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm text-text-primary truncate">
+                          {session.condition}
+                        </p>
+                        <p className="text-xs text-text-muted mt-1">
+                          {session.timestamp.toLocaleString()}
+                        </p>
+                      </div>
+                      <Badge variant={session.type === "sync" ? "green" : "blue"}>
+                        {session.type === "sync" ? "🟢 Synced" : "🔵 Live"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      {session.phase && (
+                        <Badge variant="purple">{session.phase}</Badge>
+                      )}
+                      <span className="text-text-muted ml-auto">{session.results.length} results</span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -588,7 +732,7 @@ export default function TrialsPage() {
                 </button>
               </div>
 
-              <div className="p-6">
+              <div className="p-6 flex-1 overflow-y-auto">
                 {matchingLoading ? (
                   <div className="space-y-3">
                     {[...Array(4)].map((_, i) => (
@@ -601,37 +745,79 @@ export default function TrialsPage() {
                     <p>No matching patients found</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {matchingPatients.map((patient) => (
-                      <motion.div
-                        key={patient._id}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="p-4 rounded-lg bg-surface-muted border border-surface-border hover:border-brand-purple transition-colors"
-                      >
-                        <div className="flex items-start justify-between gap-3 flex-wrap">
-                          <div className="flex-1">
-                            <p className="font-semibold text-text-primary">
-                              {patient.display_id || patient._id.slice(0, 8)}
-                            </p>
-                            <p className="text-xs text-text-muted mt-1">
-                              {patient.conditions?.[0]?.name && `Condition: ${patient.conditions[0].name}`}
-                              {patient.demographics?.age && ` • Age: ${patient.demographics.age}`}
-                              {patient.demographics?.gender && ` • Gender: ${patient.demographics.gender}`}
-                            </p>
-                            {patient.medications && patient.medications.length > 0 && (
-                              <p className="text-xs text-text-muted mt-1">
-                                Medications: {patient.medications.length}
+                  <div className="space-y-4">
+                    {matchingPatients.map((patient) => {
+                      const eligibility = getEligibilityExplanation(patient, selectedTrial!);
+                      return (
+                        <motion.div
+                          key={patient._id}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="p-4 rounded-lg bg-surface-muted border border-surface-border hover:border-brand-purple transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+                            <div className="flex-1">
+                              <p className="font-semibold text-text-primary">
+                                {patient.display_id || patient._id.slice(0, 8)}
                               </p>
-                            )}
+                              <p className="text-xs text-text-muted mt-1">
+                                {patient.demographics?.age && `Age: ${patient.demographics.age}`}
+                                {patient.demographics?.gender && ` • ${patient.demographics.gender}`}
+                              </p>
+                            </div>
+                            <Badge variant="green">Eligible</Badge>
                           </div>
-                          <Badge variant="green">Eligible</Badge>
-                        </div>
-                      </motion.div>
-                    ))}
+
+                          {/* Eligibility Explanation */}
+                          <div className="bg-white rounded-lg p-3 border border-green-200 space-y-2">
+                            {eligibility.reasons.map((reason, idx) => (
+                              <div key={idx} className="flex items-start gap-2 text-xs">
+                                {reason.includes('✓') ? (
+                                  <CheckCircle size={12} className="text-green-600 flex-shrink-0 mt-0.5" />
+                                ) : (
+                                  <span className="text-text-muted flex-shrink-0 mt-0.5">•</span>
+                                )}
+                                <span className={reason.includes('✓') ? 'text-green-700 font-medium' : 'text-text-muted'}>
+                                  {reason}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {patient.conditions && patient.conditions.length > 0 && (
+                            <p className="text-xs text-text-muted mt-3">
+                              Conditions: {(patient.conditions as any)?.map((c: any) => typeof c === 'string' ? c : c.name).join(', ')}
+                            </p>
+                          )}
+                          {patient.medications && patient.medications.length > 0 && (
+                            <p className="text-xs text-text-muted mt-1">
+                              Medications: {patient.medications.length}
+                            </p>
+                          )}
+                        </motion.div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
+
+              {!matchingLoading && matchingPatients.length > 0 && (
+                <div className="sticky bottom-0 bg-white border-t border-surface-border p-6 flex gap-3 justify-end">
+                  <Button variant="secondary" size="md" onClick={() => setShowMatchingModal(false)}>
+                    Close
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={() => {
+                      setShowMatchingModal(false);
+                      router.push('/dashboard/results');
+                    }}
+                  >
+                    View Full Results
+                  </Button>
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}

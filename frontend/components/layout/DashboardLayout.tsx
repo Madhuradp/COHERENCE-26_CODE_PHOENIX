@@ -11,7 +11,6 @@ import {
   ClipboardList,
   FlaskConical,
   BarChart3,
-  Settings,
   Beaker,
 } from "lucide-react";
 import { useAuth } from "@/lib/authContext";
@@ -23,7 +22,6 @@ const clinicianNavItems = [
   { href: "/dashboard/trials", icon: FlaskConical, label: "Clinical Trials" },
   { href: "/dashboard/matching", icon: GitCompare, label: "Trial Matching" },
   { href: "/dashboard/results", icon: ClipboardList, label: "Results" },
-  { href: "/dashboard/settings", icon: Settings, label: "Settings" },
 ];
 
 function getClinicianName(user: UserResponse | null): string {
@@ -73,7 +71,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     role: roleLabel,
     initials,
     email: user?.email || "",
-    settingsHref: "/dashboard/settings",
   };
 
   return (

@@ -133,6 +133,105 @@ async def train_ml_gatekeeper(request: TrainRequest = None):
         raise HTTPException(status_code=500, detail=f"Training error: {str(e)}")
 
 
+@router.post("/train-combinations")
+async def train_with_combinations(request: TrainRequest = None):
+    """
+    Train ML model using patient-trial combinations approach.
+
+    This is the Random Forest model from the provided script that creates all
+    patient-trial combinations and trains on them directly.
+
+    Features:
+    - Demographics: age, gender, smoking status
+    - Health metrics: BMI, HbA1c, cholesterol, glucose, blood pressure
+    - Trial characteristics: phase, age range compatibility
+    - Condition matching
+    - Medication count
+
+    Request body:
+    {
+        "model_type": "random_forest",
+        "test_size": 0.2,
+        "save_model": true
+    }
+
+    Returns training metrics with feature importance
+    """
+    if not request:
+        request = TrainRequest()
+
+    try:
+        if request.model_type not in ["random_forest", "gradient_boosting"]:
+            raise HTTPException(
+                status_code=400,
+                detail="model_type must be 'random_forest' or 'gradient_boosting'"
+            )
+
+        logger.info(f"Starting combination-based training: {request.model_type}")
+
+        # Initialize training service
+        training_service = TrainingService(model_type=request.model_type)
+
+        # Run training with combinations
+        result = training_service.train_with_combinations(
+            test_size=request.test_size,
+            random_state=42,
+            save=request.save_model
+        )
+
+        if not result["success"]:
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "Training failed")
+            )
+
+        logger.info(f"Combination training complete: {result['metrics']}")
+
+        return TrainResponse(
+            success=True,
+            model_type=request.model_type,
+            message=f"Model trained on {result['metrics']['train_size']} patient-trial combinations",
+            metrics=result["metrics"],
+            error=None
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in combination training: {e}")
+        raise HTTPException(status_code=500, detail=f"Training error: {str(e)}")
+
+
+@router.get("/patient-trial-matches/{patient_id}")
+async def get_patient_trial_matches(patient_id: str):
+    """
+    Get trial match predictions for a specific patient using the trained model.
+
+    Args:
+        patient_id: MongoDB patient ID
+
+    Returns:
+        List of trials ranked by eligibility probability
+    """
+    try:
+        training_service = TrainingService(model_type="random_forest")
+        result = training_service.predict_patient_trial_matches(patient_id)
+
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result.get("error"))
+
+        return {
+            "success": True,
+            "data": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting patient matches: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/ml-model-info")
 async def get_ml_model_info():
     """Get information about the trained ML gatekeeper model"""

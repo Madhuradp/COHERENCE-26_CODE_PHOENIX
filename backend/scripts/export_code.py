@@ -12,7 +12,7 @@ It automatically skips:
   
 Run from the workspace root::
 
-    python backend/scripts/export_code.py
+    python backend/scripts/export_code.pybackend/scripts/export_code.py
 
 Adjust `OUTPUT_PATH` if you want the result somewhere else.
 """
