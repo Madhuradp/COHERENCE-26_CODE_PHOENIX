@@ -11,7 +11,6 @@ import {
   ScrollText,
   Scale,
   Activity,
-  Users,
   FlaskConical,
   Settings,
 } from "lucide-react";
@@ -21,7 +20,6 @@ const auditNavItems = [
   { href: "/admin/audit-logs", icon: ScrollText, label: "Audit Logs" },
   { href: "/admin/fairness", icon: Scale, label: "Fairness Analytics" },
   { href: "/admin/monitoring", icon: Activity, label: "System Monitoring" },
-  { href: "/admin/users", icon: Users, label: "User Management" },
   { href: "/admin/trials", icon: FlaskConical, label: "Trial Management" },
   { href: "/admin/settings", icon: Settings, label: "Settings" },
 ];

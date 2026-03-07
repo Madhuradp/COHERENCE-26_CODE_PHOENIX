@@ -3,12 +3,17 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
-  ShieldCheck, TrendingUp, AlertTriangle, Clock, Activity, CheckCircle2, FileText,
+  ShieldCheck, TrendingUp, AlertTriangle, Activity, CheckCircle2, FileText,
+  Users, Scale,
 } from "lucide-react";
 import { Card, StatCard } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Table";
 import { ProgressBar } from "@/components/ui/ProgressBar";
-import { getAuditLogs, getUserActivity, getFairnessStats, listPatients, type AuditLog } from "@/lib/api";
+import {
+  getAuditLogs, getUserActivity, getFairnessStats, listPatients,
+  getAnalyticsSummary, listClinicians,
+  type AuditLog,
+} from "@/lib/api";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -24,7 +29,9 @@ export default function AdminDashboardPage() {
     totalPatients: 0,
     totalUsers: 0,
     piiEntities: 0,
-    complianceScore: 95,
+    complianceScore: 97.4,
+    totalMatches: 0,
+    auditLogCount: 0,
   });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [fairnessData, setFairnessData] = useState<any>(null);
@@ -33,43 +40,53 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     Promise.all([
-      getAuditLogs(),
-      getUserActivity(50),
-      getFairnessStats(),
-      listPatients(),
-    ])
-      .then(([auditRes, userRes, fairRes, patRes]) => {
-        // Get latest 5 audit logs
-        const allLogs = [...(auditRes.data || []), ...(userRes.data || [])];
-        const sortedLogs = allLogs.sort((a, b) =>
-          (b.timestamp || "").localeCompare(a.timestamp || "")
-        ).slice(0, 5);
+      getAuditLogs().catch(() => ({ data: [] as AuditLog[], success: false, message: "" })),
+      getUserActivity(50).catch(() => ({ data: [] as AuditLog[], success: false, count: 0 })),
+      getFairnessStats().catch(() => ({ data: null, success: false, message: "" })),
+      listPatients().catch(() => ({ data: [], success: false })),
+      getAnalyticsSummary().catch(() => ({ data: null, success: false })),
+      listClinicians().catch(() => ({ data: [], success: false, count: 0 })),
+    ]).then(([auditRes, userRes, fairRes, patRes, analyticsRes, usersRes]) => {
+      const allLogs = [...(auditRes.data || []), ...(userRes.data || [])];
+      const seen = new Set<string>();
+      const unique = allLogs.filter((l) => {
+        if (seen.has(l._id)) return false;
+        seen.add(l._id);
+        return true;
+      });
+      const sortedLogs = unique
+        .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))
+        .slice(0, 5);
 
-        setAuditLogs(sortedLogs);
+      setAuditLogs(sortedLogs);
 
-        // Calculate PII redacted count
-        const piiCount = allLogs
-          .filter(l => l.event_type === "PII_REDACTED")
-          .reduce((sum, l) => sum + (l.details?.entity_count || 0), 0);
+      // Use analytics summary for real PII count
+      const analytics = (analyticsRes as any)?.data;
+      const piiCount = analytics?.privacy?.entities_protected ?? 0;
+      const totalMatches = analytics?.counts?.matches ?? 0;
+      const auditLogCount = analytics?.privacy?.audit_logs_count ?? unique.length;
 
-        setStats({
-          totalPatients: patRes.data?.length || 0,
-          totalUsers: 0, // Would need a users endpoint
-          piiEntities: piiCount,
-          complianceScore: 97.4,
-        });
+      setStats({
+        totalPatients: analytics?.counts?.patients ?? (patRes.data?.length || 0),
+        totalUsers: (usersRes as any)?.data?.length ?? 0,
+        piiEntities: piiCount,
+        complianceScore: 97.4,
+        totalMatches,
+        auditLogCount,
+      });
 
-        setFairnessData(fairRes.data);
-      })
+      setFairnessData((fairRes as any).data);
+    })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
   const getActionColor = (action?: string) => {
     if (!action) return "gray";
-    if (action.includes("PII")) return "red";
-    if (action.includes("CREATED") || action.includes("SUCCESS")) return "green";
-    if (action.includes("FAILED")) return "red";
+    if (action.includes("PII") || action.includes("REDACT")) return "red";
+    if (action.includes("CREATED") || action.includes("SUCCESS") || action.includes("UPLOAD")) return "green";
+    if (action.includes("FAILED") || action.includes("DELETE")) return "red";
+    if (action.includes("LOGIN") || action.includes("AUTH")) return "blue";
     return "blue";
   };
 
@@ -98,35 +115,49 @@ export default function AdminDashboardPage() {
           </motion.div>
         )}
 
-        {/* Key Metrics */}
-        <motion.div variants={itemVariants} className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Key Metrics — 6 cards */}
+        <motion.div variants={itemVariants} className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <StatCard
             title="Total Patients"
-            value={stats.totalPatients}
+            value={loading ? "—" : String(stats.totalPatients)}
             icon={<Activity size={18} className="text-blue-500" />}
             iconBg="bg-blue-50"
             subtitle="Ingested"
           />
           <StatCard
             title="PII Entities Redacted"
-            value={stats.piiEntities}
+            value={loading ? "—" : String(stats.piiEntities)}
             icon={<ShieldCheck size={18} className="text-emerald-500" />}
             iconBg="bg-emerald-50"
             subtitle="Protected"
           />
           <StatCard
+            title="Total Matches"
+            value={loading ? "—" : String(stats.totalMatches)}
+            icon={<TrendingUp size={18} className="text-brand-purple" />}
+            iconBg="bg-brand-purple-light"
+            subtitle="Trial matchings"
+          />
+          <StatCard
+            title="Audit Log Entries"
+            value={loading ? "—" : String(stats.auditLogCount)}
+            icon={<FileText size={18} className="text-purple-500" />}
+            iconBg="bg-purple-50"
+            subtitle="Tamper-evident"
+          />
+          <StatCard
+            title="System Users"
+            value={loading ? "—" : String(stats.totalUsers)}
+            icon={<Users size={18} className="text-orange-500" />}
+            iconBg="bg-orange-50"
+            subtitle="Registered"
+          />
+          <StatCard
             title="Compliance Score"
-            value={`${stats.complianceScore}%`}
+            value={loading ? "—" : `${stats.complianceScore}%`}
             icon={<CheckCircle2 size={18} className="text-emerald-500" />}
             iconBg="bg-emerald-50"
             subtitle="CDSCO Standard"
-          />
-          <StatCard
-            title="Latest Logs"
-            value={auditLogs.length}
-            icon={<FileText size={18} className="text-purple-500" />}
-            iconBg="bg-purple-50"
-            subtitle="Recent events"
           />
         </motion.div>
 
@@ -141,7 +172,11 @@ export default function AdminDashboardPage() {
                 <span className="text-xs px-2 py-1 rounded-lg bg-green-50 text-green-700 font-semibold">LIVE</span>
               </div>
               <div className="space-y-3 max-h-80 overflow-y-auto">
-                {auditLogs.length === 0 ? (
+                {loading ? (
+                  [...Array(4)].map((_, i) => (
+                    <div key={i} className="h-12 rounded-lg bg-surface-muted animate-pulse" />
+                  ))
+                ) : auditLogs.length === 0 ? (
                   <p className="text-xs text-text-muted text-center py-4">No recent events</p>
                 ) : (
                   auditLogs.map((log, idx) => (
@@ -150,24 +185,21 @@ export default function AdminDashboardPage() {
                       className="p-3 rounded-lg bg-surface-muted hover:bg-surface-border/50 transition-colors border border-surface-border text-xs"
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1">
-                          <p className="font-semibold text-text-primary flex items-center gap-2">
-                            <Badge variant={getActionColor(log.action) as any}>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-text-primary flex items-center gap-2 flex-wrap">
+                            <Badge variant={getActionColor(log.action || log.event_type) as any}>
                               {log.action || log.event_type || "EVENT"}
                             </Badge>
                           </p>
-                          <p className="text-text-muted mt-1">
-                            <strong>{log.user_email || "System"}</strong>
+                          <p className="text-text-muted mt-1 truncate">
+                            <strong>{log.user_email || log.action_by || (log.details?.user as string) || "System"}</strong>
                             {log.document_type && ` • ${log.document_type}`}
                             {log.document_id && ` • ${log.document_id}`}
                           </p>
                         </div>
                         <span className="text-text-muted flex-shrink-0 whitespace-nowrap text-xs">
                           {log.timestamp
-                            ? new Date(log.timestamp).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
+                            ? new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                             : "—"}
                         </span>
                       </div>
@@ -184,9 +216,14 @@ export default function AdminDashboardPage() {
               <h2 className="font-semibold text-text-primary flex items-center gap-2 mb-4">
                 <AlertTriangle size={16} className="text-amber-500" /> Bias & Fairness Status
               </h2>
-              {fairnessData ? (
+              {loading ? (
                 <div className="space-y-3">
-                  {/* Gender Distribution */}
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className="h-16 rounded-lg bg-surface-muted animate-pulse" />
+                  ))}
+                </div>
+              ) : fairnessData ? (
+                <div className="space-y-3">
                   {fairnessData.gender_distribution && (
                     <div className="bg-surface-muted rounded-lg p-3">
                       <p className="text-xs font-semibold text-text-primary mb-2">Gender Balance</p>
@@ -194,14 +231,12 @@ export default function AdminDashboardPage() {
                         {Object.entries(fairnessData.gender_distribution).map(([gender, count]: [string, any]) => (
                           <div key={gender} className="flex items-center justify-between">
                             <span className="text-text-muted capitalize">{gender}</span>
-                            <span className="font-bold text-text-primary">{count}%</span>
+                            <span className="font-bold text-text-primary">{count}{typeof count === "number" && count <= 100 ? "%" : ""}</span>
                           </div>
                         ))}
                       </div>
                     </div>
                   )}
-
-                  {/* Age Distribution */}
                   {fairnessData.age_distribution && (
                     <div className="bg-surface-muted rounded-lg p-3">
                       <p className="text-xs font-semibold text-text-primary mb-2">Age Coverage</p>
@@ -217,21 +252,23 @@ export default function AdminDashboardPage() {
                       </div>
                     </div>
                   )}
-
-                  {/* Alerts */}
                   {fairnessData.bias_alerts && fairnessData.bias_alerts.length > 0 && (
                     <div className="bg-red-50 rounded-lg p-3 border border-red-200">
-                      <p className="text-xs font-semibold text-red-900 mb-2">⚠️ Active Alerts: {fairnessData.bias_alerts.length}</p>
+                      <p className="text-xs font-semibold text-red-900 mb-2">Active Alerts: {fairnessData.bias_alerts.length}</p>
                       {fairnessData.bias_alerts.slice(0, 2).map((alert: any) => (
                         <p key={alert.id} className="text-xs text-red-800 mt-1">
-                          • <strong>{alert.metric}</strong>: {alert.description.substring(0, 50)}...
+                          • <strong>{alert.metric}</strong>: {String(alert.description).substring(0, 60)}...
                         </p>
                       ))}
                     </div>
                   )}
                 </div>
               ) : (
-                <p className="text-xs text-text-muted text-center py-4">Loading fairness data...</p>
+                <div className="flex flex-col items-center gap-3 py-8 text-center">
+                  <Scale size={28} className="text-text-muted" />
+                  <p className="text-sm font-semibold text-text-primary">No fairness data yet</p>
+                  <p className="text-xs text-text-muted">Run matching jobs to generate fairness metrics.</p>
+                </div>
               )}
             </Card>
           </motion.div>
@@ -242,7 +279,7 @@ export default function AdminDashboardPage() {
           <Card>
             <div className="mb-4 p-3 rounded-lg bg-brand-purple-light border border-brand-purple/30">
               <p className="text-xs font-semibold text-brand-purple flex items-center gap-2">
-                🔑 SUPERUSER ACCESS ENABLED
+                SUPERUSER ACCESS ENABLED
               </p>
               <p className="text-xs text-text-muted mt-1">
                 Full system visibility: All patients, trials, users, audit logs, and compliance metrics
@@ -253,66 +290,51 @@ export default function AdminDashboardPage() {
               <div>
                 <h3 className="text-sm font-semibold text-text-primary mb-3">System Compliance</h3>
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">PII Protection</span>
-                    <span className="text-xs font-bold text-green-600">✓ Active</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">Audit Logging</span>
-                    <span className="text-xs font-bold text-green-600">✓ Enabled</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">RBAC Enforced</span>
-                    <span className="text-xs font-bold text-green-600">✓ Yes</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">Data Redaction</span>
-                    <span className="text-xs font-bold text-green-600">✓ Automated</span>
-                  </div>
+                  {[
+                    ["PII Protection", "Active"],
+                    ["Audit Logging", "Enabled"],
+                    ["RBAC Enforced", "Yes"],
+                    ["Data Redaction", "Automated"],
+                  ].map(([label, val]) => (
+                    <div key={label} className="flex items-center justify-between">
+                      <span className="text-xs text-text-muted">{label}</span>
+                      <span className="text-xs font-bold text-green-600">✓ {val}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
               <div>
                 <h3 className="text-sm font-semibold text-text-primary mb-3">Auditor Visibility</h3>
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">All Patients</span>
-                    <span className="text-xs font-bold text-blue-600">✓ Viewable</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">All Trials</span>
-                    <span className="text-xs font-bold text-blue-600">✓ Viewable</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">All Users</span>
-                    <span className="text-xs font-bold text-blue-600">✓ Viewable</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">All Logs</span>
-                    <span className="text-xs font-bold text-blue-600">✓ Viewable</span>
-                  </div>
+                  {[
+                    ["All Patients", "Viewable"],
+                    ["All Trials", "Viewable"],
+                    ["All Users", "Viewable"],
+                    ["All Logs", "Viewable"],
+                  ].map(([label, val]) => (
+                    <div key={label} className="flex items-center justify-between">
+                      <span className="text-xs text-text-muted">{label}</span>
+                      <span className="text-xs font-bold text-blue-600">✓ {val}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
               <div>
                 <h3 className="text-sm font-semibold text-text-primary mb-3">Data Protection</h3>
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">Encryption</span>
-                    <span className="text-xs font-bold text-green-600">✓ AES-256</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">Auth Method</span>
-                    <span className="text-xs font-bold text-green-600">✓ JWT</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">CDSCO Compliant</span>
-                    <span className="text-xs font-bold text-green-600">✓ Yes</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted">Audit Trail</span>
-                    <span className="text-xs font-bold text-green-600">✓ Complete</span>
-                  </div>
+                  {[
+                    ["Encryption", "AES-256"],
+                    ["Auth Method", "JWT"],
+                    ["CDSCO Compliant", "Yes"],
+                    ["Audit Trail", "Complete"],
+                  ].map(([label, val]) => (
+                    <div key={label} className="flex items-center justify-between">
+                      <span className="text-xs text-text-muted">{label}</span>
+                      <span className="text-xs font-bold text-green-600">✓ {val}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
