@@ -32,9 +32,15 @@ class MatchingEngine:
                 logger.warning(f"Could not initialize ML gatekeeper: {e}")
                 self.ml_service = None
 
-    def run_full_pipeline(self, patient: dict, limit: int = 100, verbose: bool = False):
+    def run_full_pipeline(self, patient: dict, limit: int = 100, verbose: bool = False, state_filter: str = "Maharashtra"):
         """
         Run 3-tier matching pipeline without external LLM calls.
+
+        Args:
+            patient: Patient record
+            limit: Max results to return
+            verbose: Log detailed progress
+            state_filter: Filter by state (default: Maharashtra)
         """
         demographics = patient.get("demographics", {}) or {}
         age = demographics.get("age")
@@ -47,13 +53,16 @@ class MatchingEngine:
 
         # ===== TIER 1: GEO + AGE FILTERS (Broad) =====
         if verbose:
-            logger.info(f"Tier 1: Geospatial + Hard Filters")
-        
-        if coords and age is not None:
+            logger.info(f"Tier 1: Geospatial + Hard Filters (State: {state_filter})")
+
+        # Use state-specific filter (Maharashtra by default)
+        if state_filter and state_filter.lower() == "maharashtra":
+            candidates = self.geo.find_maharashtra_trials(age)
+        elif coords and age is not None:
             candidates = self.geo.find_nearby_trials(coords, age)
         else:
             # Fallback if no location: find any recruiting trials matching age
-            candidates = self.geo.find_nearby_trials([0,0], age) # find_nearby handles empty coords internally usually
+            candidates = self.geo.find_nearby_trials([0,0], age)
 
         tier1_count = len(candidates)
 

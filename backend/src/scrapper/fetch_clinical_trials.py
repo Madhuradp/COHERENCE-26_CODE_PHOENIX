@@ -13,6 +13,15 @@ from datetime import datetime
 
 BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 
+# Maharashtra-specific constants
+MAHARASHTRA_LOCATION_QUERY = "Maharashtra, India"
+MAHARASHTRA_CITIES = frozenset([
+    "Mumbai", "Pune", "Nagpur", "Nashik", "Aurangabad", "Kolhapur",
+    "Solapur", "Amravati", "Nanded", "Thane", "Navi Mumbai",
+    "Satara", "Sangli", "Latur", "Jalgaon", "Akola"
+])
+MAHARASHTRA_CENTER = {"type": "Point", "coordinates": [74.8479, 19.7515]}
+
 
 class ClinicalTrialsFetcher:
     """Fetch and parse data from ClinicalTrials.gov API"""
@@ -223,6 +232,20 @@ class ClinicalTrialsFetcher:
                 "Chandigarh": [76.7794, 30.7333],
                 "Coimbatore": [76.9558, 11.0168],
                 "Visakhapatnam": [83.2185, 17.6868],
+                # Maharashtra cities (additional)
+                "Nashik": [73.7898, 20.0059],
+                "Aurangabad": [75.3433, 19.8762],
+                "Kolhapur": [74.2433, 16.7050],
+                "Solapur": [75.9064, 17.6869],
+                "Amravati": [77.7523, 20.9374],
+                "Nanded": [77.2951, 19.1383],
+                "Thane": [72.9781, 19.2183],
+                "Navi Mumbai": [73.0297, 19.0330],
+                "Satara": [74.0073, 17.6849],
+                "Sangli": [74.5815, 16.8524],
+                "Latur": [76.5604, 18.4088],
+                "Jalgaon": [75.5626, 21.0077],
+                "Akola": [77.0082, 20.7097],
                 # UK
                 "London": [-0.1276, 51.5074],
                 "Manchester": [-2.2426, 53.4808],
@@ -373,6 +396,54 @@ class ClinicalTrialsFetcher:
             return self.parse_trials({"studies": raw.get("studies", [])})
         except Exception as e:
             print(f"Live fetch error: {e}")
+            return []
+
+    def fetch_maharashtra_trials(
+        self,
+        condition: Optional[str] = None,
+        phase: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch trials strictly from Maharashtra, India with optional filtering.
+
+        Args:
+            condition: Medical condition e.g. "diabetes", "cancer"
+            phase: Trial phase e.g. "PHASE1", "PHASE2", "PHASE3", "PHASE4"
+            limit: Max results to return (10–500)
+
+        Returns:
+            List of parsed trial dicts from Maharashtra only
+        """
+        params: Dict[str, Any] = {
+            "pageSize": min(limit, 1000),
+            "query.locn": MAHARASHTRA_LOCATION_QUERY,
+            "filter.overallStatus": "RECRUITING"
+        }
+        if condition:
+            params["query.cond"] = condition
+        if phase:
+            # Use advanced query for phase filtering
+            params["query.advanced"] = f"AREA[Phase]{phase}"
+
+        try:
+            response = self.session.get(self.api_url, params=params, timeout=30)
+            response.raise_for_status()
+            raw = response.json()
+            parsed = self.parse_trials({"studies": raw.get("studies", [])})
+
+            # Ensure all returned trials are from Maharashtra
+            mh_trials = [
+                t for t in parsed
+                if any(
+                    loc.get("city") in MAHARASHTRA_CITIES or
+                    (loc.get("country") == "India" and loc.get("state") == "Maharashtra")
+                    for loc in t.get("locations", [])
+                )
+            ]
+            return mh_trials[:limit]
+        except Exception as e:
+            print(f"Maharashtra fetch error: {e}")
             return []
 
     def save_to_json(self, data: List[Dict[str, Any]], filename: str = "trials.json"):

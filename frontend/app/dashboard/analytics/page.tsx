@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { BarChart3, Brain, Zap, ShieldCheck } from "lucide-react";
+import { BarChart3, Brain, Zap, ShieldCheck, Download, TrendingUp } from "lucide-react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, LineChart, Line,
 } from "recharts";
 import {
   getAnalyticsSummary, getTrainingStats, trainModel,
   type AnalyticsSummary, type TrainingStats,
 } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -52,6 +53,47 @@ export default function AnalyticsPage() {
     } finally {
       setTraining(false);
     }
+  };
+
+  const downloadAnalyticsReport = () => {
+    if (!summary) return;
+
+    const report = `COHERENCE-26 Clinical Trial Matching - Analytics Report
+Generated: ${new Date().toLocaleString()}
+
+=== SYSTEM OVERVIEW ===
+Total Patients: ${summary.counts.patients}
+Total Trials: ${summary.counts.trials}
+Total Matches: ${summary.counts.matches}
+
+=== MATCHING HEALTH ===
+Eligible Matches: ${summary.matching_health.eligible_count}
+Ineligible Matches: ${summary.matching_health.ineligible_count}
+Review Needed: ${summary.matching_health.review_needed}
+
+=== PRIVACY & COMPLIANCE ===
+Total PII Entities Protected: ${summary.privacy.entities_protected}
+Audit Log Entries: ${summary.privacy.audit_logs_count}
+
+=== ML MODEL TRAINING ===
+Training Samples Available: ${trainingStats?.training_samples_available || 0}
+Eligible Samples: ${trainingStats?.eligible_samples || 0}
+Ineligible Samples: ${trainingStats?.ineligible_samples || 0}
+Review Needed Samples: ${trainingStats?.review_needed_samples || 0}
+Ready to Train: ${trainingStats?.ready_to_train ? "Yes" : "No"}
+
+=== SUCCESS RATE ===
+Eligible Rate: ${summary.counts.matches > 0 ? ((summary.matching_health.eligible_count / summary.counts.matches) * 100).toFixed(2) : 0}%
+Review Rate: ${summary.counts.matches > 0 ? ((summary.matching_health.review_needed / summary.counts.matches) * 100).toFixed(2) : 0}%
+Ineligible Rate: ${summary.counts.matches > 0 ? ((summary.matching_health.ineligible_count / summary.counts.matches) * 100).toFixed(2) : 0}%
+`;
+
+    const blob = new Blob([report], { type: "text/plain" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `analytics-report-${new Date().toISOString().split("T")[0]}.txt`;
+    a.click();
   };
 
   const matchingHealthData = summary
@@ -157,6 +199,114 @@ export default function AnalyticsPage() {
           </motion.div>
         </>
       )}
+
+      {/* Success Rate Overview */}
+      {summary && summary.counts.matches > 0 && (
+        <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {[
+            {
+              label: "Success Rate",
+              value: ((summary.matching_health.eligible_count / summary.counts.matches) * 100).toFixed(1),
+              unit: "%",
+              color: "text-green-600",
+              bg: "bg-green-50"
+            },
+            {
+              label: "Avg Matches per Patient",
+              value: summary.counts.matches > 0 ? (summary.counts.matches / Math.max(summary.counts.patients, 1)).toFixed(1) : "0",
+              unit: "",
+              color: "text-blue-600",
+              bg: "bg-blue-50"
+            },
+            {
+              label: "Review Rate",
+              value: ((summary.matching_health.review_needed / summary.counts.matches) * 100).toFixed(1),
+              unit: "%",
+              color: "text-amber-600",
+              bg: "bg-amber-50"
+            },
+          ].map((metric) => (
+            <div key={metric.label} className="bg-white rounded-2xl shadow-card p-6">
+              <div className={`w-10 h-10 rounded-xl ${metric.bg} flex items-center justify-center mb-3`}>
+                <TrendingUp size={18} className={metric.color} />
+              </div>
+              <p className={`text-3xl font-bold ${metric.color}`}>{metric.value}{metric.unit}</p>
+              <p className="text-xs text-text-muted mt-0.5">{metric.label}</p>
+            </div>
+          ))}
+        </motion.div>
+      )}
+
+      {/* Eligibility Distribution Pie Chart */}
+      {summary && summary.counts.matches > 0 && (
+        <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Pie Chart */}
+          <div className="bg-white rounded-2xl shadow-card p-6">
+            <h3 className="text-sm font-semibold text-text-primary mb-4">Eligibility Distribution</h3>
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie
+                  data={matchingHealthData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ label, count }) => `${label}: ${count}`}
+                  outerRadius={70}
+                  fill="#8884d8"
+                  dataKey="count"
+                >
+                  {matchingHealthData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => `${value} matches`} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Summary Stats */}
+          <div className="bg-white rounded-2xl shadow-card p-6 flex flex-col justify-center">
+            <h3 className="text-sm font-semibold text-text-primary mb-4">Summary Statistics</h3>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-green-50">
+                <span className="text-sm text-green-700 font-medium">Eligible Patients</span>
+                <span className="text-xl font-bold text-green-600">{summary.matching_health.eligible_count}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50">
+                <span className="text-sm text-amber-700 font-medium">Needs Review</span>
+                <span className="text-xl font-bold text-amber-600">{summary.matching_health.review_needed}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-red-50">
+                <span className="text-sm text-red-700 font-medium">Ineligible</span>
+                <span className="text-xl font-bold text-red-600">{summary.matching_health.ineligible_count}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-purple-50">
+                <span className="text-sm text-purple-700 font-medium">Total Matches</span>
+                <span className="text-xl font-bold text-purple-600">{summary.counts.matches}</span>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Export Report */}
+      <motion.div variants={itemVariants} className="bg-gradient-to-r from-brand-purple/5 to-blue-500/5 rounded-2xl shadow-card p-6 border border-brand-purple/20">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold text-text-primary">Export Analytics Report</h3>
+            <p className="text-xs text-text-muted mt-0.5">Download a comprehensive text report of current system metrics</p>
+          </div>
+          <Button
+            variant="primary"
+            size="md"
+            leftIcon={<Download size={15} />}
+            onClick={downloadAnalyticsReport}
+            disabled={!summary}
+          >
+            Download Report
+          </Button>
+        </div>
+      </motion.div>
 
       {/* ML Model Training */}
       {trainingStats && (

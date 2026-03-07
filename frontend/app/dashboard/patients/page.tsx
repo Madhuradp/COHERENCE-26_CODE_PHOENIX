@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
 import { Users, Filter, Search, Download, CheckCircle2, Trash2 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
@@ -31,6 +31,7 @@ export default function PatientsPage() {
   const [uploadCancelled, setUploadCancelled] = useState(false);
   const [selectedPatients, setSelectedPatients] = useState<Set<string>>(new Set());
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const cancelControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     listPatients()
@@ -98,6 +99,10 @@ export default function PatientsPage() {
       return;
     }
 
+    // Create abort controller for this upload session
+    const abortController = new AbortController();
+    cancelControllerRef.current = abortController;
+
     setIsUploading(true);
     setUploadCancelled(false);
     setUploadProgress(0);
@@ -112,9 +117,10 @@ export default function PatientsPage() {
     // Upload each patient with progress tracking
     for (let idx = 0; idx < transformedPatients.length; idx++) {
       // Check if upload was cancelled
-      if (uploadCancelled) {
+      if (abortController.signal.aborted) {
         setIsUploading(false);
         setUploadStatus(`Upload cancelled. ${successCount} records uploaded, ${failureCount} failed.`);
+        cancelControllerRef.current = null;
         return;
       }
 
@@ -122,6 +128,13 @@ export default function PatientsPage() {
         await uploadPatient(transformedPatients[idx]);
         successCount++;
       } catch (err) {
+        // Skip abort-related errors
+        if (err instanceof Error && err.message.includes("abort")) {
+          setIsUploading(false);
+          setUploadStatus(`Upload cancelled. ${successCount} records uploaded, ${failureCount} failed.`);
+          cancelControllerRef.current = null;
+          return;
+        }
         failureCount++;
         console.error(`Failed to upload patient ${idx + 1}:`, err);
       }
@@ -138,6 +151,7 @@ export default function PatientsPage() {
     setUploadStatus(
       `Upload complete: ${successCount} succeeded, ${failureCount} failed`
     );
+    cancelControllerRef.current = null;
 
     // Refresh patient list
     setTimeout(() => {
@@ -386,7 +400,14 @@ export default function PatientsPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => setUploadCancelled(true)}
+                onClick={() => {
+                  if (cancelControllerRef.current) {
+                    cancelControllerRef.current.abort();
+                  }
+                  setUploadCancelled(true);
+                  setIsUploading(false);
+                  setUploadStatus("Upload cancelled by user");
+                }}
                 className="w-full !text-red-500 hover:!bg-red-50"
               >
                 Cancel Upload

@@ -1,6 +1,6 @@
 """
-Authentication Routes - Support for all user types with RBAC
-Endpoints for Doctor, Pharmaceutical Company, Clinical Researcher, Patient
+Authentication Routes - Support for RESEARCHER and AUDITOR roles with RBAC
+Endpoints for researcher and auditor registration and management
 """
 
 import logging
@@ -12,8 +12,8 @@ from bson import ObjectId
 from ..services.auth_service import AuthService
 from ..models.users import (
     UserRole, User, UserResponse, LoginRequest, LoginResponse,
-    DoctorRegister, PharmaceuticalCompanyRegister, ClinicalResearcherRegister, PatientRegister,
-    DoctorProfile, PharmaceuticalCompanyProfile, ClinicalResearcherProfile, PatientProfile,
+    ResearcherRegister, AuditorRegister,
+    ResearcherProfile, AuditorProfile,
     PasswordChangeRequest, ProfileUpdateRequest, has_permission
 )
 from ..auth import get_current_user
@@ -71,112 +71,12 @@ async def logout(current_user: dict = Depends(get_current_user)):
     }
 
 
-# ===== DOCTOR REGISTRATION & MANAGEMENT =====
-
-@router.post("/register/doctor", status_code=201, response_model=dict)
-async def register_doctor(body: DoctorRegister):
-    """
-    Register as a Doctor.
-    Required fields: email, password, full_name, medical_degree, hospital_name
-    """
-    db = Database()
-
-    # Check if email exists
-    if db.users.find_one({"email": body.email}):
-        raise HTTPException(status_code=409, detail="Email already registered")
-
-    # Create doctor profile
-    doctor_profile = DoctorProfile(
-        medical_degree=body.medical_degree,
-        specialization=body.specialization,
-        license_number=body.license_number,
-        hospital_name=body.hospital_name,
-        hospital_city=body.hospital_city,
-        hospital_country=body.hospital_country,
-        years_of_experience=body.years_of_experience,
-        phone=body.phone,
-    )
-
-    user_doc = {
-        "email": body.email,
-        "password_hash": auth_service.get_password_hash(body.password),
-        "role": UserRole.DOCTOR.value,
-        "is_active": True,
-        "is_email_verified": False,
-        "doctor_profile": doctor_profile.model_dump(),
-        "last_login": None,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
-        "metadata": {}
-    }
-
-    result = db.users.insert_one(user_doc)
-    logger.info(f"Doctor registered: {body.email}")
-
-    return {
-        "success": True,
-        "message": "Doctor account created successfully",
-        "user_id": str(result.inserted_id),
-        "email": body.email,
-        "role": UserRole.DOCTOR.value
-    }
-
-
-# ===== PHARMACEUTICAL COMPANY REGISTRATION & MANAGEMENT =====
-
-@router.post("/register/pharmaceutical-company", status_code=201, response_model=dict)
-async def register_pharma(body: PharmaceuticalCompanyRegister):
-    """
-    Register as a Pharmaceutical Company.
-    Required fields: email, password, company_name, department, country
-    """
-    db = Database()
-
-    if db.users.find_one({"email": body.email}):
-        raise HTTPException(status_code=409, detail="Email already registered")
-
-    # Create pharma profile
-    pharma_profile = PharmaceuticalCompanyProfile(
-        company_name=body.company_name,
-        company_registration_number=body.company_registration_number,
-        department=body.department,
-        country=body.country,
-        industry_focus=body.industry_focus,
-        company_phone=body.company_phone,
-        website=body.website,
-    )
-
-    user_doc = {
-        "email": body.email,
-        "password_hash": auth_service.get_password_hash(body.password),
-        "role": UserRole.PHARMACEUTICAL_COMPANY.value,
-        "is_active": True,
-        "is_email_verified": False,
-        "pharma_profile": pharma_profile.model_dump(),
-        "last_login": None,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
-        "metadata": {}
-    }
-
-    result = db.users.insert_one(user_doc)
-    logger.info(f"Pharmaceutical company registered: {body.email}")
-
-    return {
-        "success": True,
-        "message": "Pharmaceutical company account created successfully",
-        "user_id": str(result.inserted_id),
-        "email": body.email,
-        "role": UserRole.PHARMACEUTICAL_COMPANY.value
-    }
-
-
-# ===== CLINICAL RESEARCHER REGISTRATION & MANAGEMENT =====
+# ===== RESEARCHER REGISTRATION =====
 
 @router.post("/register/researcher", status_code=201, response_model=dict)
-async def register_researcher(body: ClinicalResearcherRegister):
+async def register_researcher(body: ResearcherRegister):
     """
-    Register as a Clinical Researcher.
+    Register as a Researcher.
     Required fields: email, password, full_name, research_fields
     """
     db = Database()
@@ -185,7 +85,7 @@ async def register_researcher(body: ClinicalResearcherRegister):
         raise HTTPException(status_code=409, detail="Email already registered")
 
     # Create researcher profile
-    researcher_profile = ClinicalResearcherProfile(
+    researcher_profile = ResearcherProfile(
         full_name=body.full_name,
         research_fields=body.research_fields,
         institution=body.institution,
@@ -198,7 +98,7 @@ async def register_researcher(body: ClinicalResearcherRegister):
     user_doc = {
         "email": body.email,
         "password_hash": auth_service.get_password_hash(body.password),
-        "role": UserRole.CLINICAL_RESEARCHER.value,
+        "role": UserRole.RESEARCHER.value,
         "is_active": True,
         "is_email_verified": False,
         "researcher_profile": researcher_profile.model_dump(),
@@ -209,47 +109,46 @@ async def register_researcher(body: ClinicalResearcherRegister):
     }
 
     result = db.users.insert_one(user_doc)
-    logger.info(f"Clinical researcher registered: {body.email}")
+    logger.info(f"Researcher registered: {body.email}")
 
     return {
         "success": True,
-        "message": "Clinical researcher account created successfully",
+        "message": "Researcher account created successfully",
         "user_id": str(result.inserted_id),
         "email": body.email,
-        "role": UserRole.CLINICAL_RESEARCHER.value
+        "role": UserRole.RESEARCHER.value
     }
 
 
-# ===== PATIENT REGISTRATION & MANAGEMENT =====
+# ===== AUDITOR REGISTRATION =====
 
-@router.post("/register/patient", status_code=201, response_model=dict)
-async def register_patient(body: PatientRegister):
+@router.post("/register/auditor", status_code=201, response_model=dict)
+async def register_auditor(body: AuditorRegister):
     """
-    Register as a Patient.
-    Required fields: email, password, patient_name
+    Register as an Auditor.
+    Required fields: email, password, full_name, organization
     """
     db = Database()
 
     if db.users.find_one({"email": body.email}):
         raise HTTPException(status_code=409, detail="Email already registered")
 
-    # Create patient profile
-    patient_profile = PatientProfile(
-        patient_name=body.patient_name,
-        date_of_birth=body.date_of_birth,
-        patient_id=body.patient_id,
-        primary_condition=body.primary_condition,
-        additional_conditions=body.additional_conditions,
+    # Create auditor profile
+    auditor_profile = AuditorProfile(
+        full_name=body.full_name,
+        organization=body.organization,
+        audit_focus=body.audit_focus,
+        certification=body.certification,
         phone=body.phone,
     )
 
     user_doc = {
         "email": body.email,
         "password_hash": auth_service.get_password_hash(body.password),
-        "role": UserRole.PATIENT.value,
+        "role": UserRole.AUDITOR.value,
         "is_active": True,
         "is_email_verified": False,
-        "patient_profile": patient_profile.model_dump(),
+        "auditor_profile": auditor_profile.model_dump(),
         "last_login": None,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow(),
@@ -257,14 +156,14 @@ async def register_patient(body: PatientRegister):
     }
 
     result = db.users.insert_one(user_doc)
-    logger.info(f"Patient registered: {body.email}")
+    logger.info(f"Auditor registered: {body.email}")
 
     return {
         "success": True,
-        "message": "Patient account created successfully",
+        "message": "Auditor account created successfully",
         "user_id": str(result.inserted_id),
         "email": body.email,
-        "role": UserRole.PATIENT.value
+        "role": UserRole.AUDITOR.value
     }
 
 
@@ -292,36 +191,15 @@ async def update_profile(
     update_dict = {}
 
     # Role-specific updates
-    if current_user.get("role") == UserRole.DOCTOR.value:
-        if body.specialization:
-            update_dict["doctor_profile.specialization"] = body.specialization
-        if body.hospital_name:
-            update_dict["doctor_profile.hospital_name"] = body.hospital_name
-        if body.phone:
-            update_dict["doctor_profile.phone"] = body.phone
-
-    elif current_user.get("role") == UserRole.PHARMACEUTICAL_COMPANY.value:
-        if body.department:
-            update_dict["pharma_profile.department"] = body.department
-        if body.phone:
-            update_dict["pharma_profile.company_phone"] = body.phone
-
-    elif current_user.get("role") == UserRole.CLINICAL_RESEARCHER.value:
+    if current_user.get("role") == UserRole.RESEARCHER.value:
         if body.research_fields:
             update_dict["researcher_profile.research_fields"] = body.research_fields
         if body.phone:
             update_dict["researcher_profile.phone"] = body.phone
 
-    elif current_user.get("role") == UserRole.PATIENT.value:
-        if body.full_name:
-            update_dict["patient_profile.patient_name"] = body.full_name
+    elif current_user.get("role") == UserRole.AUDITOR.value:
         if body.phone:
-            update_dict["patient_profile.phone"] = body.phone
-
-    # Common fields
-    if body.full_name and current_user.get("role") != UserRole.PATIENT.value:
-        # Doctors, researchers store in profile, not here
-        pass
+            update_dict["auditor_profile.phone"] = body.phone
 
     update_dict["updated_at"] = datetime.utcnow()
 
@@ -419,34 +297,39 @@ def _build_user_response(user: dict) -> UserResponse:
     """Build UserResponse from database document"""
     return UserResponse(
         email=user.get("email"),
-        role=UserRole(user.get("role", UserRole.PATIENT.value)),
+        role=UserRole(user.get("role", UserRole.RESEARCHER.value)),
         is_active=user.get("is_active", True),
         is_email_verified=user.get("is_email_verified", False),
         created_at=user.get("created_at", datetime.utcnow()),
         last_login=user.get("last_login"),
-        doctor_profile=DoctorProfile(**user.get("doctor_profile", {})) if user.get("doctor_profile") else None,
-        pharma_profile=PharmaceuticalCompanyProfile(**user.get("pharma_profile", {})) if user.get("pharma_profile") else None,
-        researcher_profile=ClinicalResearcherProfile(**user.get("researcher_profile", {})) if user.get("researcher_profile") else None,
-        patient_profile=PatientProfile(**user.get("patient_profile", {})) if user.get("patient_profile") else None,
+        researcher_profile=ResearcherProfile(**user.get("researcher_profile", {})) if user.get("researcher_profile") else None,
+        auditor_profile=AuditorProfile(**user.get("auditor_profile", {})) if user.get("auditor_profile") else None,
     )
 
 
 @router.get("/users/list")
 async def list_users(current_user: dict = Depends(get_current_user)):
+    """List all active researchers and auditors"""
     db = Database()
     users = list(db.db.users.find(
-        {"role": {"$in": ["DOCTOR", "RESEARCHER", "PHARMACIST", "AUDITOR"]}},
+        {"role": {"$in": [UserRole.RESEARCHER.value, UserRole.AUDITOR.value]}},
         {"password_hash": 0}
     ))
     result = []
     for u in users:
         created = u.get("created_at", datetime.utcnow())
+        # Extract name from role-specific profile
+        full_name = ""
+        if u.get("researcher_profile"):
+            full_name = u["researcher_profile"].get("full_name", "")
+        elif u.get("auditor_profile"):
+            full_name = u["auditor_profile"].get("full_name", "")
+
         result.append({
             "email": u["email"],
-            "full_name": u.get("full_name", ""),
+            "full_name": full_name,
             "role": u.get("role", ""),
             "is_active": u.get("is_active", True),
             "created_at": created.isoformat() if isinstance(created, datetime) else str(created),
-            "organization": u.get("organization"),
         })
     return {"data": result}

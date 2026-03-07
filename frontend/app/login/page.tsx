@@ -42,9 +42,12 @@ export default function LoginPage() {
       const res = await authLogin(data.email, data.password);
       auth.login(res.access_token, res.user);
       const role = res.user.role;
-      if (role === "PATIENT") router.push("/patient");
-      else if (role === "AUDITOR") router.push("/admin");
-      else router.push("/dashboard");
+      if (role === "AUDITOR") router.push("/admin");
+      else if (role === "RESEARCHER") router.push("/dashboard");
+      else {
+        setApiError("Invalid user role");
+        setLoading(false);
+      }
     } catch (err: unknown) {
       setApiError(err instanceof Error ? err.message : "Login failed");
       setLoading(false);

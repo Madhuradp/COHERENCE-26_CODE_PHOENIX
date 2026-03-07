@@ -8,6 +8,7 @@ import {
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Table";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { listPatients, runMatch, type Patient, type MatchResult } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
@@ -77,12 +78,14 @@ export default function MatchingPage() {
   };
 
   return (
-    <motion.div
-      variants={containerVariants}
-      initial="hidden"
-      animate="show"
-      className="flex flex-col gap-6"
-    >
+    <>
+      <ProgressBar isLoading={patientsLoading} label="Loading patients..." />
+      <motion.div
+        variants={containerVariants}
+        initial="hidden"
+        animate="show"
+        className="flex flex-col gap-6"
+      >
       {/* Header */}
       <motion.div variants={itemVariants}>
         <h1 className="text-2xl font-bold text-text-primary flex items-center gap-2">
@@ -315,28 +318,86 @@ export default function MatchingPage() {
             initial={{ opacity: 0, scale: 0.97 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.4 }}
+            className="flex flex-col gap-4"
           >
             <Card>
-              <div className="flex items-center gap-4 mb-4">
+              <div className="flex items-center gap-4 mb-6">
                 <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center flex-shrink-0">
                   <CheckCircle size={22} className="text-green-500" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-text-primary">Matching Complete</h3>
+                  <h3 className="font-bold text-text-primary">Clinical Trial Matching Complete</h3>
                   <p className="text-sm text-text-muted">
-                    Found <strong className="text-text-primary">{matchResult.matches.length}</strong> trial matches for patient{" "}
+                    AI-powered 3-tier matching pipeline analyzed <strong className="text-text-primary">{matchResult.matches.length}</strong> potential trials for patient{" "}
                     <strong className="text-brand-purple">{matchResult.patient}</strong>
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-3 mb-4 flex-wrap">
-                <Badge variant="green">{matchResult.matches.filter(m => m.status === "ELIGIBLE").length} Eligible</Badge>
-                <Badge variant="orange">{matchResult.matches.filter(m => m.status === "REVIEW_NEEDED").length} Review Needed</Badge>
-                <Badge variant="red">{matchResult.matches.filter(m => m.status === "INELIGIBLE").length} Ineligible</Badge>
+
+              {/* Match Summary Grid */}
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <div className="bg-green-50 rounded-lg p-3 border border-green-200">
+                  <p className="text-xs text-text-muted mb-1">Fully Eligible</p>
+                  <p className="text-xl font-bold text-green-600">
+                    {matchResult.matches.filter(m => m.status === "ELIGIBLE").length}
+                  </p>
+                </div>
+                <div className="bg-orange-50 rounded-lg p-3 border border-orange-200">
+                  <p className="text-xs text-text-muted mb-1">Review Needed</p>
+                  <p className="text-xl font-bold text-orange-600">
+                    {matchResult.matches.filter(m => m.status === "REVIEW_NEEDED").length}
+                  </p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-3 border border-red-200">
+                  <p className="text-xs text-text-muted mb-1">Ineligible</p>
+                  <p className="text-xl font-bold text-red-600">
+                    {matchResult.matches.filter(m => m.status === "INELIGIBLE").length}
+                  </p>
+                </div>
               </div>
-              <div className="flex gap-3">
-                <Button variant="primary" size="md" onClick={() => router.push("/dashboard/results")}>
-                  View Full Results
+
+              {/* Top Matches Preview */}
+              {matchResult.matches.length > 0 && (
+                <div className="border-t border-surface-border pt-4 mb-4">
+                  <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Top Matching Trials</p>
+                  <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
+                    {matchResult.matches.slice(0, 5).map((match: any, idx: number) => (
+                      <div key={idx} className="flex items-start justify-between gap-2 p-2.5 rounded-lg bg-surface-muted hover:bg-surface-border transition-colors">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-mono font-bold text-brand-purple">{match.nct_id}</p>
+                          <p className="text-xs text-text-primary truncate">{match.title || match.brief_title || "Clinical Trial"}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            {match.overall_eligibility && (
+                              <Badge variant={match.overall_eligibility === "ELIGIBLE" ? "green" : match.overall_eligibility === "REVIEW_NEEDED" ? "orange" : "red"}>
+                                {match.overall_eligibility}
+                              </Badge>
+                            )}
+                            {match.phase && (
+                              <span className="text-xs text-text-muted">{match.phase}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-sm font-bold text-brand-purple">{Math.round(match.confidence_score * 100)}%</p>
+                          <p className="text-xs text-text-muted">match</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Info Box */}
+              <div className="bg-blue-50 rounded-xl p-3 border border-blue-200 mb-4">
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  ✓ Each result includes detailed <strong>eligibility criteria breakdown</strong>, <strong>inclusion/exclusion analysis</strong>, and <strong>patient-trial mapping</strong>. View full results for comprehensive clinical analysis.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 flex-wrap">
+                <Button variant="primary" size="md" onClick={() => router.push("/dashboard/results")} className="flex-1 min-w-[200px]">
+                  View Full Results & Analysis
                 </Button>
                 <Button variant="secondary" size="md" onClick={() => { setMatchResult(null); setSelectedPatient(null); }}>
                   Run Another
@@ -346,6 +407,7 @@ export default function MatchingPage() {
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+      </motion.div>
+    </>
   );
 }

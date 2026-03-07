@@ -1,0 +1,412 @@
+[
+  {
+    "demographics": {
+      "age": 58,
+      "gender": "Male"
+    },
+    "conditions": [
+      {
+        "name": "Non-Small Cell Lung Cancer"
+      },
+      {
+        "name": "Type 2 Diabetes"
+      }
+    ],
+    "medications": [
+      {
+        "name": "Carboplatin"
+      },
+      {
+        "name": "Pemetrexed"
+      },
+      {
+        "name": "Metformin"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "Creatinine",
+        "value": "1.2"
+      },
+      {
+        "name": "Hemoglobin",
+        "value": "11.5"
+      },
+      {
+        "name": "WBC",
+        "value": "4.2"
+      }
+    ],
+    "clinical_notes_text": "58 year old male with stage IIIB NSCLC, adenocarcinoma histology. Diagnosed Jan 2024. ECOG 1. Comorbidities: Type 2 DM controlled on metformin. Smoker history 40 pack-years, quit 2019. No active infections."
+  },
+  {
+    "demographics": {
+      "age": 72,
+      "gender": "Female"
+    },
+    "conditions": [
+      {
+        "name": "Colorectal Cancer"
+      },
+      {
+        "name": "Hypertension"
+      }
+    ],
+    "medications": [
+      {
+        "name": "5-Fluorouracil"
+      },
+      {
+        "name": "Oxaliplatin"
+      },
+      {
+        "name": "Lisinopril"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "Albumin",
+        "value": "3.8"
+      },
+      {
+        "name": "CEA",
+        "value": "2.1"
+      },
+      {
+        "name": "Creatinine",
+        "value": "0.9"
+      }
+    ],
+    "clinical_notes_text": "72-year-old female with stage III colon cancer, resected 6 months ago. HTN on lisinopril. Good performance status. Allergic to sulfonamides. Lives with son in Boston MA."
+  },
+  {
+    "demographics": {
+      "age": 45,
+      "gender": "Male"
+    },
+    "conditions": [
+      {
+        "name": "Breast Cancer"
+      },
+      {
+        "name": "Anxiety Disorder"
+      }
+    ],
+    "medications": [
+      {
+        "name": "Doxorubicin"
+      },
+      {
+        "name": "Cyclophosphamide"
+      },
+      {
+        "name": "Sertraline"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "HER2",
+        "value": "Positive"
+      },
+      {
+        "name": "ER/PR",
+        "value": "Negative"
+      },
+      {
+        "name": "Hemoglobin",
+        "value": "12.1"
+      },
+      {
+        "name": "ALT",
+        "value": "28"
+      }
+    ],
+    "clinical_notes_text": "45-year-old male with HER2+ breast cancer, T3N2M0. Started neoadjuvant chemotherapy. Mental health stable on sertraline. Psychologist support ongoing. No major contraindications."
+  },
+  {
+    "demographics": {
+      "age": 61,
+      "gender": "Female"
+    },
+    "conditions": [
+      {
+        "name": "Ovarian Cancer"
+      },
+      {
+        "name": "Obesity"
+      }
+    ],
+    "medications": [
+      {
+        "name": "Paclitaxel"
+      },
+      {
+        "name": "Carboplatin"
+      },
+      {
+        "name": "Metformin"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "CA-125",
+        "value": "45"
+      },
+      {
+        "name": "Hemoglobin",
+        "value": "10.8"
+      },
+      {
+        "name": "Albumin",
+        "value": "3.5"
+      }
+    ],
+    "clinical_notes_text": "61-year-old female, Stage IIIC ovarian cancer, post-surgery chemotherapy candidate. BMI 32. BRCA1 status pending. Referred by oncology team. Good functional status for chemotherapy."
+  },
+  {
+    "demographics": {
+      "age": 67,
+      "gender": "Male"
+    },
+    "conditions": [
+      {
+        "name": "Prostate Cancer"
+      },
+      {
+        "name": "Chronic Kidney Disease"
+      }
+    ],
+    "medications": [
+      {
+        "name": "Enzalutamide"
+      },
+      {
+        "name": "Abiraterone"
+      },
+      {
+        "name": "Allopurinol"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "PSA",
+        "value": "8.2"
+      },
+      {
+        "name": "Creatinine",
+        "value": "2.1"
+      },
+      {
+        "name": "Hemoglobin",
+        "value": "11.3"
+      },
+      {
+        "name": "eGFR",
+        "value": "28"
+      }
+    ],
+    "clinical_notes_text": "67-year-old with castration-resistant prostate cancer, mCRPC stage. eGFR 28 (Stage 3b CKD). Nephrology following at major medical center. Baseline labs obtained. Consideration needed for dose adjustment."
+  },
+  {
+    "demographics": {
+      "age": 53,
+      "gender": "Female"
+    },
+    "conditions": [
+      {
+        "name": "Melanoma"
+      },
+      {
+        "name": "Rheumatoid Arthritis"
+      }
+    ],
+    "medications": [
+      {
+        "name": "Pembrolizumab"
+      },
+      {
+        "name": "Ipilimumab"
+      },
+      {
+        "name": "Methotrexate"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "LDH",
+        "value": "220"
+      },
+      {
+        "name": "Hemoglobin",
+        "value": "13.0"
+      },
+      {
+        "name": "Lymphocytes",
+        "value": "1200"
+      }
+    ],
+    "clinical_notes_text": "53-year-old with Stage IIIB cutaneous melanoma, BRAF-negative. Starting immunotherapy. Rheumatoid arthritis controlled on methotrexate. Initial scan January 2024. Close immune monitoring recommended."
+  },
+  {
+    "demographics": {
+      "age": 59,
+      "gender": "Male"
+    },
+    "conditions": [
+      {
+        "name": "Gastric Cancer"
+      },
+      {
+        "name": "GERD"
+      }
+    ],
+    "medications": [
+      {
+        "name": "5-FU"
+      },
+      {
+        "name": "Cisplatin"
+      },
+      {
+        "name": "Famotidine"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "Hemoglobin",
+        "value": "10.5"
+      },
+      {
+        "name": "Albumin",
+        "value": "3.2"
+      },
+      {
+        "name": "Creatinine",
+        "value": "1.0"
+      }
+    ],
+    "clinical_notes_text": "59-year-old male, Stage IIIA gastric adenocarcinoma. Scheduled for perioperative chemotherapy. ECOG 1. GERD managed with PPI. Baseline labs obtained. Nutritional support being arranged."
+  },
+  {
+    "demographics": {
+      "age": 64,
+      "gender": "Female"
+    },
+    "conditions": [
+      {
+        "name": "Renal Cell Carcinoma"
+      },
+      {
+        "name": "Hypertension"
+      }
+    ],
+    "medications": [
+      {
+        "name": "Sunitinib"
+      },
+      {
+        "name": "Lisinopril"
+      },
+      {
+        "name": "Atorvastatin"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "Hemoglobin",
+        "value": "11.2"
+      },
+      {
+        "name": "Calcium",
+        "value": "9.1"
+      },
+      {
+        "name": "Creatinine",
+        "value": "1.5"
+      },
+      {
+        "name": "LDH",
+        "value": "180"
+      }
+    ],
+    "clinical_notes_text": "64-year-old with metastatic clear cell RCC, ECOG 0. HTN well-controlled. Baseline labs obtained. Referred for targeted therapy evaluation. Imaging obtained. Good candidate for trial enrollment."
+  },
+  {
+    "demographics": {
+      "age": 71,
+      "gender": "Male"
+    },
+    "conditions": [
+      {
+        "name": "Head and Neck Cancer"
+      },
+      {
+        "name": "Peripheral Neuropathy"
+      }
+    ],
+    "medications": [
+      {
+        "name": "Cisplatin"
+      },
+      {
+        "name": "5-FU"
+      },
+      {
+        "name": "Gabapentin"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "Hemoglobin",
+        "value": "12.5"
+      },
+      {
+        "name": "Albumin",
+        "value": "3.9"
+      },
+      {
+        "name": "Magnesium",
+        "value": "1.8"
+      }
+    ],
+    "clinical_notes_text": "71-year-old male, Stage IVA oropharyngeal squamous cell cancer. Baseline neuropathy grade 1. Non-smoker. Close monitoring needed for neurotoxicity. Baseline assessment complete."
+  },
+  {
+    "demographics": {
+      "age": 48,
+      "gender": "Female"
+    },
+    "conditions": [
+      {
+        "name": "Pancreatic Cancer"
+      }
+    ],
+    "medications": [
+      {
+        "name": "Gemcitabine"
+      },
+      {
+        "name": "Abraxane"
+      }
+    ],
+    "lab_values": [
+      {
+        "name": "CA 19-9",
+        "value": "180"
+      },
+      {
+        "name": "Hemoglobin",
+        "value": "10.2"
+      },
+      {
+        "name": "Albumin",
+        "value": "2.9"
+      },
+      {
+        "name": "Bilirubin",
+        "value": "1.2"
+      }
+    ],
+    "clinical_notes_text": "48-year-old with Stage IIB pancreatic adenocarcinoma. Recent endoscopic stent placed. ECOG 2 due to fatigue. Nutritional support needed. Close monitoring of CA 19-9 and imaging."
+  }
+]

@@ -4,19 +4,23 @@ from datetime import datetime
 from ..core.database import Database
 from ..services.privacy_manager import PrivacyManager
 from ..services.semantic_search import SemanticSearchService
-from ..services.match_engine import MatchingEngine
 from ..models.base import ResponseModel
+from ..models.users import UserRole
 from ..auth import get_current_user
 from bson import ObjectId
 from pydantic import BaseModel
-from ..services.patient_service import PatientService
 
 
 router = APIRouter(prefix="/api/patients", tags=["Patients"])
 
+# Maharashtra geolocation constant
+MAHARASHTRA_GEO = {"type": "Point", "coordinates": [74.8479, 19.7515]}
+
 @router.post("/upload", response_model=ResponseModel)
-async def upload_patient(raw_patient: dict):
-    """Upload single patient record"""
+async def upload_patient(raw_patient: dict, current_user: dict = Depends(get_current_user)):
+    """Upload single patient record (RESEARCHER only)"""
+    if current_user.get("role") != UserRole.RESEARCHER.value:
+        raise HTTPException(status_code=403, detail="Only researchers can upload patients")
     db = Database()
     privacy = PrivacyManager()
     semantic = SemanticSearchService()
@@ -24,7 +28,14 @@ async def upload_patient(raw_patient: dict):
     # 1. Redact PII before it even touches the DB
     redacted_data, pii_summary = privacy.redact_for_storage(raw_patient, data_type="patient")
 
-    # 2. Generate Semantic Embedding for matching
+    # 2. Auto-assign Maharashtra location if not provided
+    if "demographics" in redacted_data and isinstance(redacted_data["demographics"], dict):
+        if not redacted_data["demographics"].get("location"):
+            redacted_data["demographics"]["location"] = MAHARASHTRA_GEO
+    elif "demographics" not in redacted_data:
+        redacted_data["demographics"] = {"location": MAHARASHTRA_GEO}
+
+    # 3. Generate Semantic Embedding for matching
     redacted_data["embedding"] = semantic.generate_patient_embedding(redacted_data).tolist()
 
     # 3. Save to MongoDB
@@ -47,9 +58,9 @@ async def upload_patient(raw_patient: dict):
 
 
 @router.post("/bulk-upload", response_model=ResponseModel)
-async def bulk_upload_patients(patients: List[dict]):
+async def bulk_upload_patients(patients: List[dict], current_user: dict = Depends(get_current_user)):
     """
-    Bulk upload multiple patient records efficiently.
+    Bulk upload multiple patient records efficiently (RESEARCHER only).
 
     Request body:
     [
@@ -61,6 +72,8 @@ async def bulk_upload_patients(patients: List[dict]):
 
     Returns: List of patient IDs and statistics
     """
+    if current_user.get("role") != UserRole.RESEARCHER.value:
+        raise HTTPException(status_code=403, detail="Only researchers can upload patients")
     db = Database()
     privacy = PrivacyManager()
     semantic = SemanticSearchService()
@@ -88,7 +101,14 @@ async def bulk_upload_patients(patients: List[dict]):
             # 1. Redact PII
             redacted_data, pii_summary = privacy.redact_for_storage(raw_patient, data_type="patient")
 
-            # 2. Generate embedding
+            # 2. Auto-assign Maharashtra location if not provided
+            if "demographics" in redacted_data and isinstance(redacted_data["demographics"], dict):
+                if not redacted_data["demographics"].get("location"):
+                    redacted_data["demographics"]["location"] = MAHARASHTRA_GEO
+            elif "demographics" not in redacted_data:
+                redacted_data["demographics"] = {"location": MAHARASHTRA_GEO}
+
+            # 3. Generate embedding
             redacted_data["embedding"] = semantic.generate_patient_embedding(redacted_data).tolist()
 
             # Store for batch insert (with temp ID for audit log reference)
@@ -137,9 +157,9 @@ async def bulk_upload_patients(patients: List[dict]):
     }
 
 @router.get("/", response_model=ResponseModel)
-async def list_patients():
+async def list_patients(current_user: dict = Depends(get_current_user)):
     """
-    Get list of patients for matching selection.
+    Get list of patients for matching selection (RESEARCHER and AUDITOR).
 
     DATA DISPLAY POLICY:
     ✅ SHOWN (Required for Clinical Trial Matching):
@@ -155,6 +175,10 @@ async def list_patients():
        - Phone Number
        - Clinical Notes (free-text narratives)
     """
+    # Both RESEARCHER and AUDITOR can view patient list
+    allowed_roles = [UserRole.RESEARCHER.value, UserRole.AUDITOR.value]
+    if current_user.get("role") not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Only researchers and auditors can view patient list")
     db = Database()
     # Exclude embeddings and narrative clinical notes (PII)
     # EXPLICITLY INCLUDE medical data: conditions, medications, lab_values (NEVER redacted)
@@ -211,79 +235,6 @@ async def list_patients():
 
     return {"success": True, "data": formatted_patients}
 
-
-# ============ PATIENT SELF-SERVICE ROUTES ============
-
-@router.post("/self-upload", response_model=ResponseModel)
-async def patient_upload_own_records(raw_patient: dict, current_user: dict = Depends(get_current_user)):
-    """
-    Patient uploads their own medical records.
-    Only PATIENT role can use this.
-    """
-    if current_user.get("role") != "PATIENT":
-        raise HTTPException(status_code=403, detail="Only patients can use this endpoint")
-
-    db = Database()
-    privacy = PrivacyManager()
-    semantic = SemanticSearchService()
-
-    # 1. Redact PII before storage
-    redacted_data, pii_summary = privacy.redact_for_storage(raw_patient, data_type="patient")
-    redacted_data["patient_email"] = current_user["email"]
-
-    # 2. Generate embedding
-    redacted_data["embedding"] = semantic.generate_patient_embedding(redacted_data).tolist()
-
-    # 3. Save to MongoDB
-    result = db.patients.insert_one(redacted_data)
-    patient_id = str(result.inserted_id)
-
-    # 4. Audit log
-    audit_log = privacy.create_audit_log(
-        document_type="patient",
-        document_id=patient_id,
-        pii_summary=pii_summary,
-        user_email=current_user["email"]
-    )
-    db.audit.insert_one(audit_log)
-
-    return {
-        "success": True,
-        "data": {"id": patient_id},
-        "message": "Your medical records uploaded successfully"
-    }
-
-
-@router.post("/find-my-matches", response_model=ResponseModel)
-async def patient_find_matches(patient_id: str, current_user: dict = Depends(get_current_user)):
-    """
-    Patient finds clinical trials they match.
-    Patient can only search their own records.
-    """
-    db = Database()
-    engine = MatchingEngine()
-
-    # Get patient record
-    patient = db.patients.find_one({"_id": ObjectId(patient_id)})
-    if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
-    # Verify patient owns this record
-    if patient.get("patient_email") != current_user["email"]:
-        raise HTTPException(status_code=403, detail="Can only view your own records")
-
-    # Run 3-tier matching pipeline
-    try:
-        matches = engine.run_full_pipeline(patient)
-        return {
-            "success": True,
-            "data": matches,
-            "message": f"Found {len(matches)} matching trials"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Matching failed: {str(e)}")
-
-
 # ============ AUDITOR ENDPOINTS (NO PII) ============
 
 @router.get("/audit-logs", response_model=ResponseModel)
@@ -292,7 +243,7 @@ async def get_audit_logs(current_user: dict = Depends(get_current_user)):
     Auditor views audit logs (who accessed what, when).
     No patient PII exposed.
     """
-    if current_user.get("role") != "AUDITOR":
+    if current_user.get("role") != UserRole.AUDITOR.value:
         raise HTTPException(status_code=403, detail="Only auditors can access this")
 
     db = Database()
@@ -322,7 +273,7 @@ async def get_fairness_stats(current_user: dict = Depends(get_current_user)):
     Shows matching rates, demographics distribution, etc.
     No individual patient data.
     """
-    if current_user.get("role") != "AUDITOR":
+    if current_user.get("role") != UserRole.AUDITOR.value:
         raise HTTPException(status_code=403, detail="Only auditors can access this")
 
     db = Database()
@@ -357,8 +308,10 @@ async def get_fairness_stats(current_user: dict = Depends(get_current_user)):
 # ============ DELETE ROUTES ============
 
 @router.delete("/{patient_id}", response_model=ResponseModel)
-async def delete_patient(patient_id: str):
-    """Delete a single patient by ID"""
+async def delete_patient(patient_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a single patient by ID (RESEARCHER only)"""
+    if current_user.get("role") != UserRole.RESEARCHER.value:
+        raise HTTPException(status_code=403, detail="Only researchers can delete patients")
     db = Database()
 
     try:
@@ -389,8 +342,10 @@ async def delete_patient(patient_id: str):
 
 
 @router.post("/bulk-delete", response_model=ResponseModel)
-async def bulk_delete_patients(patient_ids: List[str]):
-    """Delete multiple patients at once"""
+async def bulk_delete_patients(patient_ids: List[str], current_user: dict = Depends(get_current_user)):
+    """Delete multiple patients at once (RESEARCHER only)"""
+    if current_user.get("role") != UserRole.RESEARCHER.value:
+        raise HTTPException(status_code=403, detail="Only researchers can delete patients")
     db = Database()
 
     if not patient_ids:

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import matching_route, trials_route, patients_route, analytics_route, auth_route
+from app.routes import matching_route, trials_route, patients_route, analytics_route, auth_route, testing_route
 
 
 def create_app() -> FastAPI:
@@ -21,6 +21,7 @@ def create_app() -> FastAPI:
     app.include_router(matching_route.router)
     app.include_router(trials_route.router)
     app.include_router(analytics_route.router)
+    app.include_router(testing_route.router)
 
     # Health check endpoint
     @app.get("/")

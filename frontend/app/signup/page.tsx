@@ -6,8 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Eye, EyeOff, Activity, Mail, Lock, User, Building2, ArrowRight, ChevronDown,
-  Stethoscope, FlaskConical, Microscope,
+  Eye, EyeOff, Activity, Mail, Lock, User, Building2, ArrowRight, Microscope, FileCheck
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -16,24 +15,6 @@ import { Button } from "@/components/ui/Button";
 import { authRegister } from "@/lib/api";
 
 // ── Schemas ────────────────────────────────────────────────────────────
-const doctorSchema = z.object({
-  role: z.literal("doctor"),
-  name: z.string().min(2, "Name is required"),
-  degree: z.string().min(2, "Medical degree is required"),
-  hospital: z.string().min(2, "Hospital / Clinic name is required"),
-  email: z.string().email("Invalid email"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-});
-
-const pharmaSchema = z.object({
-  role: z.literal("pharma"),
-  companyName: z.string().min(2, "Company name is required"),
-  orgEmail: z.string().email("Invalid organization email"),
-  department: z.string().min(2, "Department is required"),
-  country: z.string().min(2, "Country is required"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-});
-
 const researcherSchema = z.object({
   role: z.literal("researcher"),
   name: z.string().min(2, "Name is required"),
@@ -43,137 +24,35 @@ const researcherSchema = z.object({
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
-type DoctorForm = z.infer<typeof doctorSchema>;
-type PharmaForm = z.infer<typeof pharmaSchema>;
-type ResearcherForm = z.infer<typeof researcherSchema>;
+const auditorSchema = z.object({
+  role: z.literal("auditor"),
+  name: z.string().min(2, "Full name is required"),
+  organization: z.string().min(2, "Organization is required"),
+  email: z.string().email("Invalid email"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
 
-type Role = "doctor" | "pharma" | "researcher" | "";
+type ResearcherForm = z.infer<typeof researcherSchema>;
+type AuditorForm = z.infer<typeof auditorSchema>;
+
+type Role = "researcher" | "auditor" | "";
 
 const roleOptions = [
   {
-    value: "doctor" as Role,
-    label: "Doctor",
-    icon: Stethoscope,
-    description: "Medical practitioner",
-    color: "bg-brand-purple-light text-brand-purple",
-  },
-  {
-    value: "pharma" as Role,
-    label: "Pharmaceutical Company",
-    icon: FlaskConical,
-    description: "Pharma / Biotech organization",
-    color: "bg-brand-blue-light text-blue-700",
-  },
-  {
     value: "researcher" as Role,
-    label: "Clinical Researcher",
+    label: "Researcher",
     icon: Microscope,
-    description: "Academic / Research institute",
+    description: "Clinical researcher conducting patient matching",
     color: "bg-brand-orange-light text-orange-700",
   },
+  {
+    value: "auditor" as Role,
+    label: "Auditor",
+    icon: FileCheck,
+    description: "Compliance and audit oversight",
+    color: "bg-brand-blue-light text-blue-700",
+  },
 ];
-
-// ── Doctor Form ──────────────────────────────────────────────────────
-function DoctorSignupForm({ onBack }: { onBack: () => void }) {
-  const router = useRouter();
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
-
-  const { register, handleSubmit, formState: { errors } } = useForm<DoctorForm>({
-    resolver: zodResolver(doctorSchema),
-    defaultValues: { role: "doctor" },
-  });
-
-  const onSubmit = async (data: DoctorForm) => {
-    setLoading(true);
-    setApiError(null);
-    try {
-      await authRegister("DOCTOR", {
-        email: data.email,
-        password: data.password,
-        full_name: data.name,
-        medical_degree: data.degree,
-        hospital_name: data.hospital,
-      });
-      router.push("/login");
-    } catch (err: unknown) {
-      setApiError(err instanceof Error ? err.message : "Registration failed");
-      setLoading(false);
-    }
-  };
-
-  return (
-    <>
-      {apiError && <div className="mb-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">{apiError}</div>}
-    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
-      <input type="hidden" {...register("role")} />
-      <div className="grid grid-cols-2 gap-4">
-        <Input label="Full Name" placeholder="Dr. Sarah Chen" leftIcon={<User size={15} />} error={errors.name?.message} {...register("name")} />
-        <Input label="Medical Degree" placeholder="MBBS, MD" error={errors.degree?.message} {...register("degree")} />
-      </div>
-      <Input label="Hospital / Clinic Name" placeholder="AIIMS New Delhi" leftIcon={<Building2 size={15} />} error={errors.hospital?.message} {...register("hospital")} />
-      <Input label="Email address" type="email" placeholder="doctor@hospital.com" leftIcon={<Mail size={15} />} error={errors.email?.message} {...register("email")} />
-      <Input label="Password" type={showPassword ? "text" : "password"} placeholder="Min. 8 characters" leftIcon={<Lock size={15} />} rightIcon={showPassword ? <EyeOff size={15} /> : <Eye size={15} />} onRightIconClick={() => setShowPassword(!showPassword)} error={errors.password?.message} {...register("password")} />
-      <div className="flex gap-3 mt-1">
-        <Button type="button" variant="secondary" size="md" className="flex-1" onClick={onBack}>Back</Button>
-        <Button type="submit" variant="primary" size="md" loading={loading} rightIcon={<ArrowRight size={15} />} className="flex-1">Create Account</Button>
-      </div>
-    </form>
-    </>
-  );
-}
-
-// ── Pharma Form ──────────────────────────────────────────────────────
-function PharmaSignupForm({ onBack }: { onBack: () => void }) {
-  const router = useRouter();
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
-
-  const { register, handleSubmit, formState: { errors } } = useForm<PharmaForm>({
-    resolver: zodResolver(pharmaSchema),
-    defaultValues: { role: "pharma" },
-  });
-
-  const onSubmit = async (data: PharmaForm) => {
-    setLoading(true);
-    setApiError(null);
-    try {
-      await authRegister("PHARMACEUTICAL_COMPANY", {
-        email: data.orgEmail,
-        password: data.password,
-        company_name: data.companyName,
-        department: data.department,
-        country: data.country,
-      });
-      router.push("/login");
-    } catch (err: unknown) {
-      setApiError(err instanceof Error ? err.message : "Registration failed");
-      setLoading(false);
-    }
-  };
-
-  return (
-    <>
-      {apiError && <div className="mb-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">{apiError}</div>}
-    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
-      <input type="hidden" {...register("role")} />
-      <Input label="Company Name" placeholder="Cipla Ltd / Biocon" leftIcon={<Building2 size={15} />} error={errors.companyName?.message} {...register("companyName")} />
-      <Input label="Organization Email" type="email" placeholder="research@company.com" leftIcon={<Mail size={15} />} error={errors.orgEmail?.message} {...register("orgEmail")} />
-      <div className="grid grid-cols-2 gap-4">
-        <Input label="Department / Division" placeholder="R&D / Clinical Affairs" error={errors.department?.message} {...register("department")} />
-        <Input label="Country" placeholder="India" error={errors.country?.message} {...register("country")} />
-      </div>
-      <Input label="Password" type={showPassword ? "text" : "password"} placeholder="Min. 8 characters" leftIcon={<Lock size={15} />} rightIcon={showPassword ? <EyeOff size={15} /> : <Eye size={15} />} onRightIconClick={() => setShowPassword(!showPassword)} error={errors.password?.message} {...register("password")} />
-      <div className="flex gap-3 mt-1">
-        <Button type="button" variant="secondary" size="md" className="flex-1" onClick={onBack}>Back</Button>
-        <Button type="submit" variant="primary" size="md" loading={loading} rightIcon={<ArrowRight size={15} />} className="flex-1">Create Account</Button>
-      </div>
-    </form>
-    </>
-  );
-}
 
 // ── Researcher Form ──────────────────────────────────────────────────
 function ResearcherSignupForm({ onBack }: { onBack: () => void }) {
@@ -191,11 +70,12 @@ function ResearcherSignupForm({ onBack }: { onBack: () => void }) {
     setLoading(true);
     setApiError(null);
     try {
-      await authRegister("CLINICAL_RESEARCHER", {
+      await authRegister("RESEARCHER", {
         email: data.email,
         password: data.password,
         full_name: data.name,
         research_fields: [data.researchField],
+        institution: data.institution,
       });
       router.push("/login");
     } catch (err: unknown) {
@@ -207,18 +87,65 @@ function ResearcherSignupForm({ onBack }: { onBack: () => void }) {
   return (
     <>
       {apiError && <div className="mb-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">{apiError}</div>}
-    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
-      <input type="hidden" {...register("role")} />
-      <Input label="Full Name" placeholder="Dr. Priya Sharma" leftIcon={<User size={15} />} error={errors.name?.message} {...register("name")} />
-      <Input label="Institution / University" placeholder="IIT Bombay / TIFR" leftIcon={<Building2 size={15} />} error={errors.institution?.message} {...register("institution")} />
-      <Input label="Research Field" placeholder="Oncology, Cardiology..." error={errors.researchField?.message} {...register("researchField")} />
-      <Input label="Email address" type="email" placeholder="researcher@institution.edu" leftIcon={<Mail size={15} />} error={errors.email?.message} {...register("email")} />
-      <Input label="Password" type={showPassword ? "text" : "password"} placeholder="Min. 8 characters" leftIcon={<Lock size={15} />} rightIcon={showPassword ? <EyeOff size={15} /> : <Eye size={15} />} onRightIconClick={() => setShowPassword(!showPassword)} error={errors.password?.message} {...register("password")} />
-      <div className="flex gap-3 mt-1">
-        <Button type="button" variant="secondary" size="md" className="flex-1" onClick={onBack}>Back</Button>
-        <Button type="submit" variant="primary" size="md" loading={loading} rightIcon={<ArrowRight size={15} />} className="flex-1">Create Account</Button>
-      </div>
-    </form>
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+        <input type="hidden" {...register("role")} />
+        <Input label="Full Name" placeholder="Dr. Priya Sharma" leftIcon={<User size={15} />} error={errors.name?.message} {...register("name")} />
+        <Input label="Institution / University" placeholder="IIT Bombay / Stanford University" leftIcon={<Building2 size={15} />} error={errors.institution?.message} {...register("institution")} />
+        <Input label="Research Field" placeholder="Oncology, Cardiology, Immunology..." error={errors.researchField?.message} {...register("researchField")} />
+        <Input label="Email address" type="email" placeholder="researcher@institution.edu" leftIcon={<Mail size={15} />} error={errors.email?.message} {...register("email")} />
+        <Input label="Password" type={showPassword ? "text" : "password"} placeholder="Min. 8 characters" leftIcon={<Lock size={15} />} rightIcon={showPassword ? <EyeOff size={15} /> : <Eye size={15} />} onRightIconClick={() => setShowPassword(!showPassword)} error={errors.password?.message} {...register("password")} />
+        <div className="flex gap-3 mt-1">
+          <Button type="button" variant="secondary" size="md" className="flex-1" onClick={onBack}>Back</Button>
+          <Button type="submit" variant="primary" size="md" loading={loading} rightIcon={<ArrowRight size={15} />} className="flex-1">Create Account</Button>
+        </div>
+      </form>
+    </>
+  );
+}
+
+// ── Auditor Form ──────────────────────────────────────────────────────
+function AuditorSignupForm({ onBack }: { onBack: () => void }) {
+  const router = useRouter();
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  const { register, handleSubmit, formState: { errors } } = useForm<AuditorForm>({
+    resolver: zodResolver(auditorSchema),
+    defaultValues: { role: "auditor" },
+  });
+
+  const onSubmit = async (data: AuditorForm) => {
+    setLoading(true);
+    setApiError(null);
+    try {
+      await authRegister("AUDITOR", {
+        email: data.email,
+        password: data.password,
+        full_name: data.name,
+        organization: data.organization,
+      });
+      router.push("/login");
+    } catch (err: unknown) {
+      setApiError(err instanceof Error ? err.message : "Registration failed");
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      {apiError && <div className="mb-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">{apiError}</div>}
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+        <input type="hidden" {...register("role")} />
+        <Input label="Full Name" placeholder="John Compliance Officer" leftIcon={<User size={15} />} error={errors.name?.message} {...register("name")} />
+        <Input label="Organization" placeholder="Compliance Firm / Institution" leftIcon={<Building2 size={15} />} error={errors.organization?.message} {...register("organization")} />
+        <Input label="Email address" type="email" placeholder="auditor@organization.com" leftIcon={<Mail size={15} />} error={errors.email?.message} {...register("email")} />
+        <Input label="Password" type={showPassword ? "text" : "password"} placeholder="Min. 8 characters" leftIcon={<Lock size={15} />} rightIcon={showPassword ? <EyeOff size={15} /> : <Eye size={15} />} onRightIconClick={() => setShowPassword(!showPassword)} error={errors.password?.message} {...register("password")} />
+        <div className="flex gap-3 mt-1">
+          <Button type="button" variant="secondary" size="md" className="flex-1" onClick={onBack}>Back</Button>
+          <Button type="submit" variant="primary" size="md" loading={loading} rightIcon={<ArrowRight size={15} />} className="flex-1">Create Account</Button>
+        </div>
+      </form>
     </>
   );
 }
@@ -370,9 +297,8 @@ export default function SignupPage() {
                   </div>
                 )}
 
-                {selectedRole === "doctor" && <DoctorSignupForm onBack={handleBack} />}
-                {selectedRole === "pharma" && <PharmaSignupForm onBack={handleBack} />}
                 {selectedRole === "researcher" && <ResearcherSignupForm onBack={handleBack} />}
+                {selectedRole === "auditor" && <AuditorSignupForm onBack={handleBack} />}
               </motion.div>
             )}
           </AnimatePresence>

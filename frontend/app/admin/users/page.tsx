@@ -20,10 +20,7 @@ const itemVariants = {
 };
 
 const roleColors: Record<string, "purple" | "blue" | "green" | "orange" | "gray"> = {
-  DOCTOR: "blue",
-  ADMIN: "purple",
   RESEARCHER: "green",
-  PHARMACIST: "orange",
   AUDITOR: "gray",
 };
 

@@ -7,11 +7,12 @@ import { TopNavbar } from "./TopNavbar";
 import {
   LayoutDashboard,
   Users,
-  FlaskConical,
   GitCompare,
   ClipboardList,
+  FlaskConical,
   BarChart3,
   Settings,
+  Beaker,
 } from "lucide-react";
 import { useAuth } from "@/lib/authContext";
 import type { UserResponse } from "@/lib/api";
@@ -21,27 +22,24 @@ const clinicianNavItems = [
   { href: "/dashboard/patients", icon: Users, label: "Patients" },
   { href: "/dashboard/trials", icon: FlaskConical, label: "Clinical Trials" },
   { href: "/dashboard/matching", icon: GitCompare, label: "Trial Matching" },
-  { href: "/dashboard/results", icon: ClipboardList, label: "Match Results" },
-  { href: "/dashboard/analytics", icon: BarChart3, label: "Recruitment Analytics" },
+  { href: "/dashboard/results", icon: ClipboardList, label: "Results" },
+  { href: "/dashboard/testing", icon: Beaker, label: "Testing" },
+  { href: "/dashboard/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/dashboard/settings", icon: Settings, label: "Settings" },
 ];
 
 function getClinicianName(user: UserResponse | null): string {
-  if (!user) return "Clinician";
-  if (user.full_name) return user.full_name;
+  if (!user) return "Researcher";
   if (user.researcher_profile?.full_name) return user.researcher_profile.full_name;
-  if (user.pharma_profile?.company_name) return user.pharma_profile.company_name;
   return user.email.split("@")[0];
 }
 
 function getRoleLabel(user: UserResponse | null): string {
-  if (!user) return "Clinician";
+  if (!user) return "Researcher";
   const map: Record<string, string> = {
-    DOCTOR: "Doctor",
-    PHARMACEUTICAL_COMPANY: "Pharma Company",
-    CLINICAL_RESEARCHER: "Researcher",
+    RESEARCHER: "Researcher",
   };
-  return map[user.role] || "Clinician";
+  return map[user.role] || "Researcher";
 }
 
 function getInitials(name: string): string {

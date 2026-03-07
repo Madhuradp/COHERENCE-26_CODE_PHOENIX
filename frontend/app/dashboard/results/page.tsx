@@ -324,12 +324,75 @@ export default function ResultsPage() {
                       </span>
                     </div>
 
+                    {/* Overall Eligibility Status */}
+                    {(selectedMatch as any).overall_eligibility && (
+                      <div className="mb-4 p-3 rounded-lg bg-blue-50 border border-blue-200">
+                        <p className="text-xs font-semibold text-blue-700 uppercase tracking-wider mb-1">Overall Eligibility</p>
+                        <p className="text-sm font-bold text-blue-900">{(selectedMatch as any).overall_eligibility}</p>
+                      </div>
+                    )}
+
+                    {/* Explanation */}
+                    {(selectedMatch as any).explanation && (
+                      <p className="text-xs text-text-muted mb-4 leading-relaxed">{(selectedMatch as any).explanation}</p>
+                    )}
+
                     {selectedMatch.analysis?.summary && (
                       <p className="text-xs text-text-muted mb-4 leading-relaxed">{selectedMatch.analysis.summary}</p>
                     )}
 
+                    {/* Inclusion Criteria Breakdown */}
+                    {(selectedMatch as any).inclusion_criteria && (selectedMatch as any).inclusion_criteria.length > 0 && (
+                      <div className="mb-4 border-t border-surface-border pt-3">
+                        <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider mb-2">✓ Inclusion Criteria</p>
+                        <div className="flex flex-col gap-2">
+                          {(selectedMatch as any).inclusion_criteria.map((criterion: any, i: number) => (
+                            <div key={i} className="bg-emerald-50 rounded p-2 border-l-2 border-emerald-500">
+                              <p className="text-xs font-medium text-text-primary">{criterion.criterion}</p>
+                              {criterion.patient_value && (
+                                <p className="text-xs text-text-muted mt-0.5">Patient: {criterion.patient_value}</p>
+                              )}
+                              <Badge variant={criterion.status === "MET" ? "green" : "orange"} className="mt-1">
+                                {criterion.status}
+                              </Badge>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Exclusion Criteria Breakdown */}
+                    {(selectedMatch as any).exclusion_criteria && (selectedMatch as any).exclusion_criteria.length > 0 && (
+                      <div className="mb-4 border-t border-surface-border pt-3">
+                        <p className="text-xs font-semibold text-orange-600 uppercase tracking-wider mb-2">✗ Exclusion Criteria</p>
+                        <div className="flex flex-col gap-2">
+                          {(selectedMatch as any).exclusion_criteria.map((criterion: any, i: number) => (
+                            <div key={i} className="bg-orange-50 rounded p-2 border-l-2 border-orange-500">
+                              <p className="text-xs font-medium text-text-primary">{criterion.criterion}</p>
+                              {criterion.patient_has !== undefined && (
+                                <p className="text-xs text-text-muted mt-0.5">
+                                  {criterion.patient_has ? "Patient has this" : "Patient does not have this"}
+                                </p>
+                              )}
+                              <Badge variant={criterion.status === "NOT_EXCLUDED" ? "green" : "red"} className="mt-1">
+                                {criterion.status}
+                              </Badge>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Patient-Trial Mapping Analysis */}
+                    {(selectedMatch as any).mapping_analysis && (
+                      <div className="border-t border-surface-border pt-3">
+                        <p className="text-xs font-semibold text-brand-purple uppercase tracking-wider mb-2">📊 Mapping Analysis</p>
+                        <p className="text-xs text-text-muted leading-relaxed">{(selectedMatch as any).mapping_analysis}</p>
+                      </div>
+                    )}
+
                     {(selectedMatch.analysis?.criteria_met?.length ?? 0) > 0 && (
-                      <div className="mb-3">
+                      <div className="mb-3 border-t border-surface-border pt-3">
                         <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider mb-2">Criteria Met</p>
                         <div className="flex flex-col gap-1.5">
                           {selectedMatch.analysis!.criteria_met!.map((c, i) => (
@@ -343,7 +406,7 @@ export default function ResultsPage() {
                     )}
 
                     {(selectedMatch.analysis?.criteria_failed?.length ?? 0) > 0 && (
-                      <div className="mb-3">
+                      <div className="mb-3 border-t border-surface-border pt-3">
                         <p className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-2">Criteria Failed</p>
                         <div className="flex flex-col gap-1.5">
                           {selectedMatch.analysis!.criteria_failed!.map((c, i) => (
@@ -357,7 +420,7 @@ export default function ResultsPage() {
                     )}
 
                     {(selectedMatch.analysis?.warnings?.length ?? 0) > 0 && (
-                      <div>
+                      <div className="border-t border-surface-border pt-3">
                         <p className="text-xs font-semibold text-orange-500 uppercase tracking-wider mb-2">Warnings</p>
                         <div className="flex flex-col gap-1.5">
                           {selectedMatch.analysis!.warnings!.map((w, i) => (

@@ -52,6 +52,28 @@ CITY_COORDS_MAP: Dict[str, List[float]] = {
     "sydney": [151.2093, -33.8688], "singapore": [103.8198, 1.3521],
 }
 
+# Maharashtra cities and coordinates
+MAHARASHTRA_CITIES = {
+    "mumbai", "pune", "nagpur", "thane", "nashik",
+    "aurangabad", "solapur", "satara", "kolhapur",
+    "ahmednagar", "sangli", "ratnagiri", "sindhudurg",
+    "navi mumbai", "mira-bhayander", "kalyan-dombivali"
+}
+
+MAHARASHTRA_COORDS: Dict[str, List[float]] = {
+    "mumbai": [72.8777, 19.0760],
+    "pune": [73.8567, 18.5204],
+    "nagpur": [79.0882, 21.1458],
+    "thane": [72.9781, 19.2183],
+    "nashik": [73.7997, 19.9975],
+    "aurangabad": [75.3433, 19.8762],
+    "solapur": [75.9064, 17.6596],
+    "satara": [73.9621, 17.6754],
+    "kolhapur": [73.7535, 16.7050],
+    "ahmednagar": [74.7421, 19.0976],
+    "navi mumbai": [73.0297, 19.0330],
+}
+
 class GeoService:
     MAX_DISTANCE_METERS = 100000  # 100km
 
@@ -100,6 +122,25 @@ class GeoService:
 
         # Final fallback: all recruiting trials
         return list(self.db.trials.find(base_query).limit(limit))
+
+    def find_maharashtra_trials(self, age: int, limit: int = 50):
+        """
+        Find ONLY trials in Maharashtra state.
+        Filters by:
+        1. State = Maharashtra
+        2. Status = RECRUITING
+        3. Age eligibility includes patient age
+        """
+        query = {
+            "status": "RECRUITING",
+            "eligibility.min_age": {"$lte": age},
+            "$or": [
+                {"eligibility.max_age": {"$gte": age}},
+                {"eligibility.max_age": None}
+            ],
+            "locations.state": {"$in": ["Maharashtra", "MH"]}
+        }
+        return list(self.db.trials.find(query).limit(limit))
 
     def calculate_distance(self, p_coords: List[float], t_location: Dict) -> float:
         try:

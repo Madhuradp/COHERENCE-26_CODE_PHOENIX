@@ -31,30 +31,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 
 // ── Types ────────────────────────────────────────────────────────────
 
-export interface DoctorProfile {
-  medical_degree: string;
-  specialization?: string;
-  license_number?: string;
-  hospital_name: string;
-  hospital_city?: string;
-  hospital_country?: string;
-  years_of_experience?: number;
-  phone?: string;
-  is_verified?: boolean;
-}
-
-export interface PharmaceuticalCompanyProfile {
-  company_name: string;
-  company_registration_number?: string;
-  department: string;
-  country: string;
-  industry_focus?: string[];
-  company_phone?: string;
-  website?: string;
-  is_verified?: boolean;
-}
-
-export interface ClinicalResearcherProfile {
+export interface ResearcherProfile {
   full_name: string;
   research_fields: string[];
   institution?: string;
@@ -65,27 +42,26 @@ export interface ClinicalResearcherProfile {
   is_verified?: boolean;
 }
 
-export interface PatientProfile {
-  patient_name: string;
-  date_of_birth?: string;
-  patient_id?: string;
-  primary_condition?: string;
-  additional_conditions?: string[];
+export interface AuditorProfile {
+  full_name: string;
+  organization: string;
+  audit_focus?: string[];
+  certification?: string;
   phone?: string;
+  is_verified?: boolean;
 }
+
+export type UserRole = 'RESEARCHER' | 'AUDITOR';
 
 export interface UserResponse {
   email: string;
-  role: string;
-  full_name?: string;
+  role: UserRole;
   is_active: boolean;
   is_email_verified: boolean;
   created_at: string;
   last_login?: string;
-  doctor_profile?: DoctorProfile;
-  pharma_profile?: PharmaceuticalCompanyProfile;
-  researcher_profile?: ClinicalResearcherProfile;
-  patient_profile?: PatientProfile;
+  researcher_profile?: ResearcherProfile;
+  auditor_profile?: AuditorProfile;
 }
 
 export interface LoginResponse {
@@ -141,13 +117,34 @@ export interface MatchAnalysis {
 
 export interface MatchResult {
   _id?: string;
-  patient_id: string;
+  patient_id?: string;
   nct_id: string;
+  title?: string;
+  brief_title?: string;
+  phase?: string;
   run_date?: string;
   status: 'ELIGIBLE' | 'INELIGIBLE' | 'REVIEW_NEEDED';
   confidence_score: number;
   analysis?: MatchAnalysis;
   distance_km?: number;
+  // Detailed eligibility breakdown
+  overall_eligibility?: 'ELIGIBLE' | 'INELIGIBLE' | 'REVIEW_NEEDED';
+  inclusion_criteria?: Array<{
+    criterion: string;
+    patient_value?: string | number;
+    status: 'MET' | 'NOT_MET';
+  }>;
+  exclusion_criteria?: Array<{
+    criterion: string;
+    patient_has?: boolean;
+    status: 'NOT_EXCLUDED' | 'EXCLUDED';
+  }>;
+  // Analysis details
+  explanation?: string;
+  mapping_analysis?: string;
+  fit_score?: number;
+  semantic_score?: number;
+  tier2_score?: number;
 }
 
 export interface AnalyticsSummary {
@@ -192,21 +189,15 @@ export async function authRegister(
   data: Record<string, unknown>
 ): Promise<{ success: boolean; message: string; user_id: string; email: string; role: string }> {
   const roleEndpoints: Record<string, string> = {
-    'doctor': '/api/auth/register/doctor',
-    'DOCTOR': '/api/auth/register/doctor',
-    'pharma': '/api/auth/register/pharmaceutical-company',
-    'PHARMACEUTICAL_COMPANY': '/api/auth/register/pharmaceutical-company',
-    'PHARMACIST': '/api/auth/register/pharmaceutical-company',
     'researcher': '/api/auth/register/researcher',
-    'CLINICAL_RESEARCHER': '/api/auth/register/researcher',
     'RESEARCHER': '/api/auth/register/researcher',
-    'patient': '/api/auth/register/patient',
-    'PATIENT': '/api/auth/register/patient',
+    'auditor': '/api/auth/register/auditor',
+    'AUDITOR': '/api/auth/register/auditor',
   };
 
   const endpoint = roleEndpoints[role];
   if (!endpoint) {
-    throw new Error(`Unknown role: ${role}`);
+    throw new Error(`Unknown role: ${role}. Must be 'RESEARCHER' or 'AUDITOR'.`);
   }
 
   return apiFetch(endpoint, {
@@ -253,13 +244,6 @@ export async function bulkDeletePatients(patientIds: string[]): Promise<{ succes
   });
 }
 
-export async function findMyMatches(patientId: string): Promise<{ success: boolean; data: MatchResult[]; message: string }> {
-  return apiFetch(`/api/patients/find-my-matches?patient_id=${patientId}`, {
-    method: 'POST',
-    body: JSON.stringify({}),
-  });
-}
-
 export async function getAuditLogs(): Promise<{ success: boolean; data: AuditLog[]; message: string }> {
   return apiFetch('/api/patients/audit-logs');
 }
@@ -285,18 +269,33 @@ export async function searchTrials(params?: {
   return apiFetch(`/api/trials/search${query}`);
 }
 
-export async function syncTrials(extractCriteria = true): Promise<{ success: boolean; message: string; extraction_stats?: unknown }> {
-  return apiFetch(`/api/trials/sync?extract_criteria=${extractCriteria}`, { method: 'POST' });
+export async function syncTrials(params?: {
+  condition?: string;
+  phase?: string;
+  limit?: number;
+  extract_criteria?: boolean;
+}): Promise<{ success: boolean; message: string; synced_from?: string; count?: number; condition_filter?: string; phase_filter?: string; extraction_stats?: unknown }> {
+  const qs = new URLSearchParams();
+  if (params?.condition) qs.set('condition', params.condition);
+  if (params?.phase) qs.set('phase', params.phase);
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+  qs.set('extract_criteria', String(params?.extract_criteria ?? true));
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch(`/api/trials/sync${query}`, { method: 'POST' });
 }
 
 export async function searchTrialsLive(params?: {
   condition?: string;
   location?: string;
+  phase?: string;
   limit?: number;
 }): Promise<{ success: boolean; count: number; source: string; data: Trial[] }> {
   const qs = new URLSearchParams();
   if (params?.condition) qs.set('condition', params.condition);
-  if (params?.location) qs.set('location', params.location);
+  // Default location to Maharashtra if not provided
+  const location = params?.location || "Maharashtra, India";
+  qs.set('location', location);
+  if (params?.phase) qs.set('phase', params.phase);
   if (params?.limit !== undefined) qs.set('limit', String(params.limit));
   const query = qs.toString() ? `?${qs.toString()}` : '';
   return apiFetch(`/api/trials/search-live${query}`);
@@ -337,4 +336,96 @@ export async function trainModel(modelType: 'random_forest' | 'gradient_boosting
 
 export async function getMLModelInfo(): Promise<{ success: boolean; data: Record<string, unknown> }> {
   return apiFetch('/api/analytics/ml-model-info');
+}
+
+// ── Testing ──────────────────────────────────────────────────────
+
+export interface TestValidationResult {
+  patient_id: string;
+  trial_id: string;
+  eligibility: 'ELIGIBLE' | 'INELIGIBLE' | 'REVIEW_NEEDED';
+  fit_score: number;
+}
+
+export interface BulkValidationResponse {
+  success: boolean;
+  total_validations: number;
+  validations: TestValidationResult[];
+  summary: {
+    eligible: number;
+    ineligible: number;
+    review_needed: number;
+    average_fit_score: number;
+  };
+}
+
+export interface AvailableTestData {
+  available_trials: number;
+  available_patients: number;
+  state_filter: string;
+  can_run_tests: boolean;
+  data_summary: {
+    trials: {
+      total: number;
+      sample?: { nct_id: string; title: string; phase: string };
+    };
+    patients: {
+      total: number;
+      sample?: { age: number; gender: string; conditions: string[] };
+    };
+  };
+}
+
+export interface TestRun {
+  _id?: string;
+  timestamp?: string;
+  total_combinations: number;
+  total_eligible: number;
+  total_ineligible: number;
+  total_review_needed: number;
+  average_fit_score: number;
+  state_filter?: string;
+}
+
+export async function runDynamicTests(params?: {
+  state?: string;
+  limit_trials?: number;
+  limit_patients?: number;
+}): Promise<{ success: boolean; saved_test_id?: string; [key: string]: unknown }> {
+  const qs = new URLSearchParams();
+  if (params?.state) qs.set('state', params.state);
+  if (params?.limit_trials !== undefined) qs.set('limit_trials', String(params.limit_trials));
+  if (params?.limit_patients !== undefined) qs.set('limit_patients', String(params.limit_patients));
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch(`/api/test/run-dynamic-tests${query}`, { method: 'POST' });
+}
+
+export async function runPatientTests(patientId: string, params?: {
+  state?: string;
+  limit_trials?: number;
+}): Promise<{ success: boolean; [key: string]: unknown }> {
+  const qs = new URLSearchParams();
+  if (params?.state) qs.set('state', params.state);
+  if (params?.limit_trials !== undefined) qs.set('limit_trials', String(params.limit_trials));
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch(`/api/test/run-patient-tests/${patientId}${query}`, { method: 'POST' });
+}
+
+export async function getAvailableTestData(state = 'Maharashtra'): Promise<AvailableTestData> {
+  return apiFetch(`/api/test/available-data?state=${state}`);
+}
+
+export async function getTestHistory(limit = 10): Promise<{ success: boolean; total_test_runs: number; test_runs: TestRun[] }> {
+  return apiFetch(`/api/test/test-history?limit=${limit}`);
+}
+
+export async function bulkValidateMatching(params?: {
+  state?: string;
+  limit?: number;
+}): Promise<BulkValidationResponse> {
+  const qs = new URLSearchParams();
+  if (params?.state) qs.set('state', params.state);
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch(`/api/test/bulk-validate${query}`, { method: 'POST' });
 }
