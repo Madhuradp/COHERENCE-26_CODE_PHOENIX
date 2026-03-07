@@ -97,10 +97,12 @@ export default function TrialsPage() {
   const [maxEnrollment, setMaxEnrollment] = useState<number | "">("");
 
   // Sync parameters state
-  const [syncPanelOpen, setSyncPanelOpen] = useState(false);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
   const [syncCondition, setSyncCondition] = useState("");
   const [syncPhase, setSyncPhase] = useState("");
   const [syncLimit, setSyncLimit] = useState(50);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     searchTrials({ limit: 50 })
@@ -109,21 +111,66 @@ export default function TrialsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleSync = async () => {
+  const handleSync = async (retryWithAdjustedParams = false) => {
+    // Validate condition is provided
+    if (!syncCondition.trim()) {
+      setSyncError("Please specify a medical condition (e.g., diabetes, cancer, hypertension)");
+      return;
+    }
+
     setSyncing(true);
     setSyncMsg(null);
+    setSyncError(null);
+
     try {
-      const res = await syncTrials({
-        condition: syncCondition || undefined,
+      // Try with current parameters
+      let res = await syncTrials({
+        condition: syncCondition,
         phase: syncPhase || undefined,
         limit: syncLimit,
         extract_criteria: true
       });
-      setSyncMsg(res.message);
+
+      // If no data found, retry with broader parameters
+      if (!res.success || (res.count === 0 && retryCount < 2)) {
+        setRetryCount(retryCount + 1);
+        setSyncMsg(`No trials found for "${syncCondition}" ${syncPhase ? `in ${syncPhase}` : ""}. Retrying with broader search...`);
+
+        // Retry without phase filter
+        if (syncPhase) {
+          res = await syncTrials({
+            condition: syncCondition,
+            phase: undefined,
+            limit: syncLimit + 20,
+            extract_criteria: true
+          });
+        }
+
+        // If still no results, suggest alternatives
+        if (!res.success || res.count === 0) {
+          setSyncError(
+            `No trials found for "${syncCondition}". Try:\n` +
+            "• Use different spelling (e.g., 'Type 2 Diabetes' instead of 'Diabetes')\n" +
+            "• Search for broader conditions\n" +
+            "• Check if trials exist in Maharashtra database"
+          );
+          setSyncing(false);
+          return;
+        }
+      }
+
+      setSyncMsg(`✓ Successfully synced ${res.count || 0} clinical trials from Maharashtra`);
+      setRetryCount(0);
+
+      // Refresh trials list
       const fresh = await searchTrials({ limit: 50 });
       setTrials(fresh.data);
+
+      // Close modal on success
+      setSyncModalOpen(false);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Sync failed");
+      const errMsg = e instanceof Error ? e.message : "Sync failed";
+      setSyncError(`Sync failed: ${errMsg}. Please check your internet connection and try again.`);
     } finally {
       setSyncing(false);
     }
@@ -213,90 +260,152 @@ export default function TrialsPage() {
             variant="primary"
             size="md"
             leftIcon={<RefreshCw size={16} className={syncing ? "animate-spin" : ""} />}
-            onClick={handleSync}
+            onClick={() => setSyncModalOpen(true)}
             loading={syncing}
           >
-            Sync clinical trials
-          </Button>
-          <Button
-            variant="secondary"
-            size="md"
-            leftIcon={<Filter size={16} />}
-            onClick={() => setSyncPanelOpen(!syncPanelOpen)}
-            className={syncPanelOpen ? "!border-brand-purple" : ""}
-          >
-            Sync Parameters
+            Sync Clinical Trials
           </Button>
         </div>
       </motion.div>
 
-      {/* Sync Parameters Panel */}
-      {syncPanelOpen && (
+      {/* Sync Clinical Trials Modal */}
+      {syncModalOpen && (
         <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          className="p-4 bg-surface-muted rounded-xl border border-surface-border"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
         >
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-            {/* Condition Filter */}
-            <div>
-              <label className="block text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">
-                Condition
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. diabetes, cancer"
-                value={syncCondition}
-                onChange={(e) => setSyncCondition(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-surface-border focus:border-brand-purple outline-none"
-              />
-            </div>
-
-            {/* Phase Filter */}
-            <div>
-              <label className="block text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">
-                Phase
-              </label>
-              <select
-                value={syncPhase}
-                onChange={(e) => setSyncPhase(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-surface-border focus:border-brand-purple outline-none"
-              >
-                <option value="">All Phases</option>
-                <option value="PHASE1">Phase 1</option>
-                <option value="PHASE2">Phase 2</option>
-                <option value="PHASE3">Phase 3</option>
-                <option value="PHASE4">Phase 4</option>
-              </select>
-            </div>
-
-            {/* Limit Filter */}
-            <div>
-              <label className="block text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">
-                Limit (Trials)
-              </label>
-              <input
-                type="number"
-                min="10"
-                max="500"
-                step="10"
-                value={syncLimit}
-                onChange={(e) => setSyncLimit(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-surface-border focus:border-brand-purple outline-none"
-              />
-            </div>
-
-            {/* Location Badge (Read-only) */}
-            <div>
-              <label className="block text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">
-                Location
-              </label>
-              <div className="px-3 py-2 rounded-lg text-sm bg-blue-50 border border-blue-200 flex items-center gap-2">
-                <span className="text-blue-700 font-medium">📍 Maharashtra, India</span>
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-2xl shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto"
+          >
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-surface-border p-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-text-primary">Sync Clinical Trials from Maharashtra</h2>
+                <p className="text-sm text-text-muted mt-0.5">Search and sync trials for specific medical conditions</p>
               </div>
+              <button
+                onClick={() => setSyncModalOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-surface-muted transition-colors"
+              >
+                <X size={18} className="text-text-muted" />
+              </button>
             </div>
-          </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-5">
+              {/* Condition Input - Required */}
+              <div>
+                <label className="block text-sm font-semibold text-text-primary mb-2">
+                  Medical Condition <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. diabetes, cancer, hypertension, heart disease"
+                  value={syncCondition}
+                  onChange={(e) => setSyncCondition(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl text-sm bg-surface-muted border border-surface-border focus:border-brand-purple focus:ring-2 focus:ring-brand-purple/10 outline-none transition-all"
+                  autoFocus
+                />
+                <p className="text-xs text-text-muted mt-1.5">Specify the disease or health condition to search for trials (required)</p>
+              </div>
+
+              {/* Phase Filter */}
+              <div>
+                <label className="block text-sm font-semibold text-text-primary mb-2">Trial Phase (Optional)</label>
+                <select
+                  value={syncPhase}
+                  onChange={(e) => setSyncPhase(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl text-sm bg-surface-muted border border-surface-border focus:border-brand-purple focus:ring-2 focus:ring-brand-purple/10 outline-none transition-all"
+                >
+                  <option value="">All Phases (Recommended)</option>
+                  <option value="PHASE1">Phase 1 - Safety & Dosage</option>
+                  <option value="PHASE2">Phase 2 - Efficacy & Side Effects</option>
+                  <option value="PHASE3">Phase 3 - Efficacy & Monitoring</option>
+                  <option value="PHASE4">Phase 4 - Post-Market Surveillance</option>
+                </select>
+                <p className="text-xs text-text-muted mt-1.5">Leave blank to search all trial phases</p>
+              </div>
+
+              {/* Limit Filter */}
+              <div>
+                <label className="block text-sm font-semibold text-text-primary mb-2">Number of Trials to Sync</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="10"
+                    max="500"
+                    step="10"
+                    value={syncLimit}
+                    onChange={(e) => setSyncLimit(Number(e.target.value))}
+                    className="flex-1"
+                  />
+                  <span className="text-sm font-bold text-brand-purple bg-brand-purple-light px-3 py-1.5 rounded-lg min-w-[60px] text-center">
+                    {syncLimit}
+                  </span>
+                </div>
+                <p className="text-xs text-text-muted mt-1.5">Fetch 10-500 trials (more = slower sync, but more comprehensive)</p>
+              </div>
+
+              {/* Location Display */}
+              <div className="p-4 rounded-xl bg-blue-50 border border-blue-200">
+                <div className="flex items-center gap-2">
+                  <MapPin size={16} className="text-blue-600" />
+                  <span className="text-sm font-semibold text-blue-700">📍 Maharashtra, India (Locked)</span>
+                </div>
+                <p className="text-xs text-blue-600 mt-1">All synced trials will be from Maharashtra only</p>
+              </div>
+
+              {/* Error Messages */}
+              {syncError && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-4 rounded-xl bg-red-50 border border-red-200"
+                >
+                  <p className="text-sm font-semibold text-red-700 mb-2">⚠️ {syncError.split("\n")[0]}</p>
+                  {syncError.includes("•") && (
+                    <ul className="text-xs text-red-600 space-y-1 ml-4">
+                      {syncError.split("\n").slice(1).map((line, i) => (
+                        <li key={i}>{line}</li>
+                      ))}
+                    </ul>
+                  )}
+                </motion.div>
+              )}
+
+              {/* Retry Counter */}
+              {retryCount > 0 && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700">
+                  Retry attempt {retryCount}/2 - Searching with adjusted parameters...
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="sticky bottom-0 bg-white border-t border-surface-border p-6 flex gap-3 justify-end">
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => setSyncModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => handleSync()}
+                loading={syncing}
+                leftIcon={<RefreshCw size={16} />}
+                disabled={!syncCondition.trim()}
+              >
+                {syncing ? "Syncing..." : "Sync Trials"}
+              </Button>
+            </div>
+          </motion.div>
         </motion.div>
       )}
 
