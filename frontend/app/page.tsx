@@ -5,17 +5,18 @@ import Link from "next/link";
 import {
   Activity,
   ArrowRight,
+  LogIn,
   UserPlus,
-  Stethoscope,
   Shield,
   Zap,
-  Pill,
+  ClipboardCheck,
   CheckCircle,
   ChevronRight,
-  Heart,
+  UploadCloud,
   FlaskConical,
+  FileText,
   Users,
-  Star,
+  BarChart2,
 } from "lucide-react";
 
 const containerVariants = {
@@ -30,28 +31,28 @@ const itemVariants = {
 const steps = [
   {
     number: "01",
-    icon: UserPlus,
-    title: "Create an Account",
+    icon: UploadCloud,
+    title: "Upload Patient Dataset",
     description:
-      "Sign up as a patient in under a minute. No medical knowledge required — just your basic details.",
+      "Import anonymized CSV records into the secure pipeline. Patient identities are never exposed — only de-identified health attributes are processed.",
     color: "bg-brand-purple-light",
     iconColor: "text-brand-purple",
   },
   {
     number: "02",
-    icon: Heart,
-    title: "Add Your Health Information",
+    icon: FlaskConical,
+    title: "Run Eligibility Matching",
     description:
-      "Enter your diagnosis, lab results, medications and location. Your data is encrypted and private.",
+      "The AI engine applies rule-based logic and machine learning to evaluate each record against active trial inclusion and exclusion criteria.",
     color: "bg-brand-blue-light",
     iconColor: "text-blue-600",
   },
   {
     number: "03",
-    icon: FlaskConical,
-    title: "Discover Matching Trials",
+    icon: FileText,
+    title: "Review Ranked Results",
     description:
-      "Our AI engine evaluates your eligibility and shows you real clinical trials you may qualify for.",
+      "Browse ranked trial matches with per-patient eligibility explanations. Every recommendation includes transparent reasoning so researchers understand exactly why a patient qualifies or is excluded.",
     color: "bg-brand-orange-light",
     iconColor: "text-orange-600",
   },
@@ -60,35 +61,35 @@ const steps = [
 const features = [
   {
     icon: Shield,
-    title: "Secure Data Handling",
+    title: "Privacy by Design",
     description:
-      "All patient data is anonymized and encrypted. We follow HIPAA and GDPR compliance standards. Your identity is never shared.",
+      "Patient records are anonymized before processing. The system enforces strict data governance and HIPAA compliance — no personally identifiable information enters the matching pipeline.",
     color: "bg-brand-purple-light",
     iconColor: "text-brand-purple",
   },
   {
     icon: Zap,
-    title: "Smart AI Matching",
+    title: "Explainable AI Matching",
     description:
-      "Our eligibility engine uses rule-based logic and machine learning to evaluate your health profile against real trial criteria.",
+      "Our hybrid eligibility engine combines rule-based filters with machine learning to rank trial matches — and explains every decision. Researchers can audit each match against trial criteria in full detail.",
     color: "bg-brand-teal-light",
     iconColor: "text-teal-600",
   },
   {
-    icon: Pill,
-    title: "Access to New Treatments",
+    icon: ClipboardCheck,
+    title: "Compliance & Audit Tools",
     description:
-      "Clinical trials often offer early access to breakthrough treatments before they become widely available.",
+      "Auditors get dedicated access to fairness metrics, anonymization verification logs, and full audit trails — enabling ethical oversight of every matching run.",
     color: "bg-brand-orange-light",
     iconColor: "text-orange-600",
   },
 ];
 
 const stats = [
-  { value: "1,200+", label: "Patients matched", icon: Users },
-  { value: "89", label: "Active trials", icon: FlaskConical },
-  { value: "91%", label: "Match accuracy", icon: Star },
-  { value: "12", label: "Cities covered", icon: CheckCircle },
+  { value: "10,000+", label: "Records processed", icon: Users },
+  { value: "340+", label: "Trials indexed", icon: FlaskConical },
+  { value: "91%", label: "Match accuracy", icon: BarChart2 },
+  { value: "100%", label: "Audit coverage", icon: CheckCircle },
 ];
 
 export default function LandingPage() {
@@ -131,10 +132,10 @@ export default function LandingPage() {
               Login
             </Link>
             <Link
-              href="/signup/patient"
+              href="/signup"
               className="px-4 py-2 rounded-xl text-sm font-semibold bg-brand-purple text-white hover:bg-violet-600 shadow-sm transition-all duration-200"
             >
-              Sign up free
+              Sign up
             </Link>
           </div>
         </div>
@@ -164,7 +165,7 @@ export default function LandingPage() {
           <motion.div variants={itemVariants} className="flex justify-center mb-6">
             <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-brand-purple-light text-brand-purple text-xs font-semibold border border-brand-purple/20">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-purple animate-pulse" />
-              AI-Powered Clinical Trial Matching
+              AI-Powered Clinical Trial Eligibility Engine
             </span>
           </motion.div>
 
@@ -173,16 +174,17 @@ export default function LandingPage() {
             variants={itemVariants}
             className="text-4xl sm:text-5xl lg:text-6xl font-bold text-text-primary leading-tight tracking-tight max-w-4xl mx-auto"
           >
-            Find Clinical Trials That{" "}
-            <span className="text-gradient-purple">Match Your Health Profile</span>
+            AI Infrastructure for{" "}
+            <span className="text-gradient-purple">Clinical Trial Eligibility & Matching</span>
           </motion.h1>
 
           <motion.p
             variants={itemVariants}
             className="mt-5 text-base sm:text-lg text-text-secondary max-w-2xl mx-auto leading-relaxed"
           >
-            TrailMatch helps patients discover clinical trials they may qualify for
-            based on their medical information — securely, transparently, and for free.
+            TrailMatch gives research institutions a secure, explainable pipeline to match
+            anonymized patient cohorts against real-world trial criteria — with full auditability
+            and ethical safeguards built in.
           </motion.p>
 
           {/* CTA Buttons */}
@@ -194,23 +196,41 @@ export default function LandingPage() {
               href="/login"
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-brand-purple text-white font-semibold text-sm hover:bg-violet-600 shadow-md hover:shadow-lg transition-all duration-200"
             >
-              Login to your account
-              <ArrowRight size={15} />
-            </Link>
-            <Link
-              href="/signup/patient"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-white text-text-primary font-semibold text-sm border border-surface-border hover:border-brand-purple hover:text-brand-purple hover:bg-brand-purple-light/40 shadow-card transition-all duration-200"
-            >
-              <UserPlus size={15} />
-              Patient Sign up — Free
+              <LogIn size={15} />
+              Login
             </Link>
             <Link
               href="/signup"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-white/60 backdrop-blur-sm text-text-secondary font-medium text-sm border border-white hover:bg-white transition-all duration-200"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-white text-text-primary font-semibold text-sm border border-surface-border hover:border-brand-purple hover:text-brand-purple hover:bg-brand-purple-light/40 shadow-card transition-all duration-200"
             >
-              <Stethoscope size={15} />
-              Clinician Sign up
+              <UserPlus size={15} />
+              Sign up
             </Link>
+          </motion.div>
+
+          {/* Role callout */}
+          <motion.div
+            variants={itemVariants}
+            className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-6"
+          >
+            <div className="flex items-start gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-sm border border-white shadow-card text-left">
+              <div className="w-8 h-8 rounded-xl bg-brand-purple-light flex items-center justify-center shrink-0 mt-0.5">
+                <UploadCloud size={15} className="text-brand-purple" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-text-primary">Researcher</p>
+                <p className="text-xs text-text-muted leading-relaxed">Upload datasets · Run AI matching · View ranked results</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-sm border border-white shadow-card text-left">
+              <div className="w-8 h-8 rounded-xl bg-brand-orange-light flex items-center justify-center shrink-0 mt-0.5">
+                <ClipboardCheck size={15} className="text-orange-600" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-text-primary">Auditor</p>
+                <p className="text-xs text-text-muted leading-relaxed">Monitor compliance · Fairness metrics · Audit logs</p>
+              </div>
+            </div>
           </motion.div>
 
           {/* Trust badge */}
@@ -218,7 +238,7 @@ export default function LandingPage() {
             variants={itemVariants}
             className="mt-5 text-xs text-text-muted"
           >
-            No credit card required · HIPAA compliant · Data always encrypted
+            HIPAA Compliant · IRB-Ready · No PHI Exposure · Explainable AI
           </motion.p>
 
           {/* Floating stat pills */}
@@ -251,14 +271,14 @@ export default function LandingPage() {
             className="text-center mb-14"
           >
             <span className="text-xs font-semibold text-brand-purple uppercase tracking-wider">
-              Simple Process
+              Researcher Workflow
             </span>
             <h2 className="text-3xl font-bold text-text-primary mt-2">
               How TrailMatch Works
             </h2>
             <p className="text-text-secondary mt-3 max-w-xl mx-auto text-sm">
-              Getting matched with clinical trials takes just three steps.
-              No medical expertise needed.
+              A three-step pipeline from anonymized data ingestion to ranked,
+              explainable trial recommendations — built for research teams.
             </p>
           </motion.div>
 
@@ -310,14 +330,14 @@ export default function LandingPage() {
             className="text-center mb-14"
           >
             <span className="text-xs font-semibold text-brand-purple uppercase tracking-wider">
-              Why Choose Us
+              Platform Capabilities
             </span>
             <h2 className="text-3xl font-bold text-text-primary mt-2">
-              Built for Patients, Powered by AI
+              Built for Research Institutions, Powered by AI
             </h2>
             <p className="text-text-secondary mt-3 max-w-xl mx-auto text-sm">
-              TrailMatch puts patients at the center of clinical research, making
-              it easy to find and apply for trials.
+              TrailMatch is a clinical research infrastructure platform combining explainable AI,
+              ethical safeguards, and end-to-end audit tooling.
             </p>
           </motion.div>
 
@@ -370,25 +390,26 @@ export default function LandingPage() {
                 <Activity className="text-white" size={24} />
               </div>
               <h2 className="text-3xl font-bold mb-3">
-                Ready to Find Your Trial?
+                Ready to Run Your First Eligibility Match?
               </h2>
               <p className="text-white/70 text-sm max-w-md mx-auto mb-7">
-                Join thousands of patients discovering clinical trials that match
-                their health profile — completely free.
+                Join research institutions using TrailMatch to accelerate patient recruitment
+                while maintaining the highest standards of data privacy and explainability.
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                 <Link
-                  href="/signup/patient"
+                  href="/signup"
                   className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-white text-brand-purple font-semibold text-sm hover:bg-brand-purple-light transition-all duration-200 shadow-lg"
                 >
                   <UserPlus size={15} />
-                  Create Free Patient Account
+                  Sign up
                 </Link>
                 <Link
                   href="/login"
                   className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-white/10 border border-white/20 text-white font-medium text-sm hover:bg-white/20 transition-all duration-200"
                 >
-                  Already have an account? Login
+                  <LogIn size={15} />
+                  Login
                 </Link>
               </div>
             </div>
@@ -422,7 +443,7 @@ export default function LandingPage() {
             <p className="text-xs text-text-muted text-center md:text-right">
               &copy; {new Date().getFullYear()} TrailMatch. All rights reserved.
               <br />
-              HIPAA Compliant · AI-Powered Matching
+              HIPAA Compliant · Explainable AI · Ethical Research Infrastructure
             </p>
           </div>
         </div>
