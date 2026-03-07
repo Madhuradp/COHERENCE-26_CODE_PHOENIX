@@ -257,11 +257,18 @@ export default function ResultsPage() {
                       display_id: selectedPatient.display_id || selectedPatient._id,
                       age: selectedPatient.demographics?.age,
                       gender: selectedPatient.demographics?.gender,
-                      primary_condition: selectedPatient.primary_condition,
-                      medications_count: selectedPatient.medications_count,
-                      lab_values_count: selectedPatient.lab_values_count,
+                      primary_condition: selectedPatient.conditions?.[0]?.name || "Unknown",
+                      medications_count: selectedPatient.medications?.length || 0,
+                      lab_values_count: selectedPatient.lab_values?.length || 0,
                     },
-                    filtered as any
+                    filtered.map(m => ({
+                      nct_id: m.nct_id,
+                      title: m.title || "",
+                      status: m.status,
+                      confidence_score: m.confidence_score,
+                      distance_km: m.distance_km || 0,
+                      explanation: m.explanation || m.analysis?.summary || "",
+                    } as any))
                   );
                 }
               }}
@@ -280,7 +287,7 @@ export default function ResultsPage() {
               ) : (
                 <Table
                   columns={columns as Parameters<typeof Table>[0]["columns"]}
-                  data={filtered as Record<string, unknown>[]}
+                  data={filtered as unknown as Record<string, unknown>[]}
                   onRowClick={(row) => setSelectedMatch(row as unknown as MatchResult)}
                   emptyMessage="No match results found. Run matching from the Matching page first."
                 />
@@ -352,9 +359,11 @@ export default function ResultsPage() {
                               {criterion.patient_value && (
                                 <p className="text-xs text-text-muted mt-0.5">Patient: {criterion.patient_value}</p>
                               )}
-                              <Badge variant={criterion.status === "MET" ? "green" : "orange"} className="mt-1">
-                                {criterion.status}
-                              </Badge>
+                              <div className="mt-1">
+                                <Badge variant={criterion.status === "MET" ? "green" : "orange"}>
+                                  {criterion.status}
+                                </Badge>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -374,9 +383,11 @@ export default function ResultsPage() {
                                   {criterion.patient_has ? "Patient has this" : "Patient does not have this"}
                                 </p>
                               )}
-                              <Badge variant={criterion.status === "NOT_EXCLUDED" ? "green" : "red"} className="mt-1">
-                                {criterion.status}
-                              </Badge>
+                              <div className="mt-1">
+                                <Badge variant={criterion.status === "NOT_EXCLUDED" ? "green" : "red"}>
+                                  {criterion.status}
+                                </Badge>
+                              </div>
                             </div>
                           ))}
                         </div>

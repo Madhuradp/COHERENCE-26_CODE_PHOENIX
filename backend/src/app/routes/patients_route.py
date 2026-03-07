@@ -57,10 +57,30 @@ async def upload_patient(raw_patient: dict, current_user: dict = Depends(get_cur
     }
 
 
+async def _generate_embeddings_background(patient_ids: List[str], background_tasks: BackgroundTasks):
+    """Generate embeddings asynchronously in background"""
+    db = Database()
+    semantic = SemanticSearchService()
+
+    for patient_id in patient_ids:
+        try:
+            patient = db.patients.find_one({"_id": ObjectId(patient_id)})
+            if patient:
+                embedding = semantic.generate_patient_embedding(patient).tolist()
+                db.patients.update_one({"_id": ObjectId(patient_id)}, {"$set": {"embedding": embedding}})
+        except Exception:
+            pass
+
+
 @router.post("/bulk-upload", response_model=ResponseModel)
-async def bulk_upload_patients(patients: List[dict], current_user: dict = Depends(get_current_user)):
+async def bulk_upload_patients(
+    patients: List[dict],
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user)
+):
     """
     Bulk upload multiple patient records efficiently (RESEARCHER only).
+    Embeddings are generated asynchronously in background for speed.
 
     Request body:
     [
@@ -70,13 +90,12 @@ async def bulk_upload_patients(patients: List[dict], current_user: dict = Depend
         ...
     ]
 
-    Returns: List of patient IDs and statistics
+    Returns: List of patient IDs and statistics (embeddings generated asynchronously)
     """
     if current_user.get("role") != UserRole.RESEARCHER.value:
         raise HTTPException(status_code=403, detail="Only researchers can upload patients")
     db = Database()
     privacy = PrivacyManager()
-    semantic = SemanticSearchService()
 
     if not patients or len(patients) == 0:
         raise HTTPException(status_code=400, detail="No patients provided")
@@ -92,9 +111,10 @@ async def bulk_upload_patients(patients: List[dict], current_user: dict = Depend
         "total_pii_entities": 0
     }
 
-    # Batch process patients
+    # Batch process patients (PII redaction + location only)
     documents_to_insert = []
     audit_logs_to_insert = []
+    patient_ids_for_embedding = []
 
     for idx, raw_patient in enumerate(patients):
         try:
@@ -108,8 +128,8 @@ async def bulk_upload_patients(patients: List[dict], current_user: dict = Depend
             elif "demographics" not in redacted_data:
                 redacted_data["demographics"] = {"location": MAHARASHTRA_GEO}
 
-            # 3. Generate embedding
-            redacted_data["embedding"] = semantic.generate_patient_embedding(redacted_data).tolist()
+            # 3. Skip embedding generation here - do it in background
+            redacted_data["embedding"] = None  # Will be generated asynchronously
 
             # Store for batch insert (with temp ID for audit log reference)
             temp_id = f"temp_{idx}"
@@ -139,6 +159,7 @@ async def bulk_upload_patients(patients: List[dict], current_user: dict = Depend
             insert_result = db.patients.insert_many(documents_to_insert)
             results["success_count"] = len(insert_result.inserted_ids)
             results["patient_ids"] = [str(pid) for pid in insert_result.inserted_ids]
+            patient_ids_for_embedding = results["patient_ids"]
 
             # Update audit logs with real patient IDs
             for audit_log, patient_id in zip(audit_logs_to_insert, results["patient_ids"]):
@@ -150,16 +171,33 @@ async def bulk_upload_patients(patients: List[dict], current_user: dict = Depend
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database insertion failed: {str(e)}")
 
+    # Schedule background embedding generation (non-blocking)
+    if background_tasks and patient_ids_for_embedding:
+        background_tasks.add_task(_generate_embeddings_background, patient_ids_for_embedding, background_tasks)
+
     return {
         "success": True,
         "data": results,
-        "message": f"Bulk upload complete: {results['success_count']} succeeded, {results['failed_count']} failed"
+        "message": f"Bulk upload complete: {results['success_count']} succeeded, {results['failed_count']} failed. Embeddings generating in background..."
     }
 
 @router.get("/", response_model=ResponseModel)
-async def list_patients(current_user: dict = Depends(get_current_user)):
+async def list_patients(
+    current_user: dict = Depends(get_current_user),
+    location: str = None,
+    age_min: int = None,
+    age_max: int = None,
+    gender: str = None,
+    condition: str = None
+):
     """
     Get list of patients for matching selection (RESEARCHER and AUDITOR).
+
+    Geographic & Medical Filtering:
+    - location: Filter by state/city (e.g., "Maharashtra", "Mumbai")
+    - age_min/age_max: Age range filtering
+    - gender: Filter by gender ("Male", "Female")
+    - condition: Filter by medical condition (partial match)
 
     DATA DISPLAY POLICY:
     ✅ SHOWN (Required for Clinical Trial Matching):
@@ -168,22 +206,53 @@ async def list_patients(current_user: dict = Depends(get_current_user)):
        - Condition/Diagnosis (primary medical condition)
        - Medications (for drug interaction checks)
        - Lab Values (for lab result matching)
+       - Location (for geographic matching)
 
     🔒 REDACTED (Personal/Sensitive Data):
-       - Patient Name
-       - Patient Email
-       - Phone Number
+       - Patient Name, Email, Phone Number
        - Clinical Notes (free-text narratives)
     """
     # Both RESEARCHER and AUDITOR can view patient list
     allowed_roles = [UserRole.RESEARCHER.value, UserRole.AUDITOR.value]
     if current_user.get("role") not in allowed_roles:
         raise HTTPException(status_code=403, detail="Only researchers and auditors can view patient list")
+
     db = Database()
+
+    # Build query with geographic & medical filters
+    query = {}
+
+    # Geographic filtering
+    if location:
+        location_lower = location.lower()
+        # Search in state or city
+        query["$or"] = [
+            {"demographics.location.state": {"$regex": location, "$options": "i"}},
+            {"demographics.location.city": {"$regex": location, "$options": "i"}},
+            {"demographics.location.country": {"$regex": location, "$options": "i"}}
+        ]
+
+    # Age filtering
+    if age_min is not None:
+        query["demographics.age"] = {"$gte": age_min}
+    if age_max is not None:
+        if "demographics.age" in query:
+            query["demographics.age"]["$lte"] = age_max
+        else:
+            query["demographics.age"] = {"$lte": age_max}
+
+    # Gender filtering
+    if gender:
+        query["demographics.gender"] = {"$regex": f"^{gender}$", "$options": "i"}
+
+    # Condition filtering
+    if condition:
+        query["conditions.name"] = {"$regex": condition, "$options": "i"}
+
     # Exclude embeddings and narrative clinical notes (PII)
     # EXPLICITLY INCLUDE medical data: conditions, medications, lab_values (NEVER redacted)
     patients = list(db.patients.find(
-        {},
+        query,
         {
             "conditions": 1,
             "medications": 1,

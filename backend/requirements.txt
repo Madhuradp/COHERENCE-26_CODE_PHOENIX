@@ -18,3 +18,4 @@ sentence-transformers
 torch
 PyJWT
 python-multipart
+psutil

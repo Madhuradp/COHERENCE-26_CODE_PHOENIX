@@ -215,13 +215,35 @@ export async function listClinicians(): Promise<{ success: boolean; data: UserRe
 }
 
 export async function getUserActivity(limit = 100): Promise<{ success: boolean; data: AuditLog[]; count: number }> {
-  return apiFetch(`/api/auth/audit/activity?limit=${limit}`);
+  try {
+    const result = await apiFetch<{ success: boolean; data: AuditLog[] }>('/api/patients/audit-logs');
+    return {
+      ...result,
+      count: (result.data || []).slice(0, limit).length,
+      data: (result.data || []).slice(0, limit),
+    };
+  } catch {
+    return { success: false, data: [], count: 0 };
+  }
 }
 
 // ── Patients ─────────────────────────────────────────────────────────
 
-export async function listPatients(): Promise<{ success: boolean; data: Patient[] }> {
-  return apiFetch('/api/patients/');
+export async function listPatients(params?: {
+  location?: string;
+  age_min?: number;
+  age_max?: number;
+  gender?: string;
+  condition?: string;
+}): Promise<{ success: boolean; data: Patient[] }> {
+  const qs = new URLSearchParams();
+  if (params?.location) qs.set('location', params.location);
+  if (params?.age_min !== undefined) qs.set('age_min', String(params.age_min));
+  if (params?.age_max !== undefined) qs.set('age_max', String(params.age_max));
+  if (params?.gender) qs.set('gender', params.gender);
+  if (params?.condition) qs.set('condition', params.condition);
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch(`/api/patients/${query}`);
 }
 
 export async function uploadPatient(patientData: Record<string, unknown>): Promise<{ success: boolean; data: { id: string; pii_redacted?: number }; message: string }> {
@@ -258,12 +280,16 @@ export async function searchTrials(params?: {
   condition?: string;
   min_age?: number;
   max_age?: number;
+  location?: string;
+  phase?: string;
   limit?: number;
 }): Promise<{ success: boolean; count: number; data: Trial[] }> {
   const qs = new URLSearchParams();
   if (params?.condition) qs.set('condition', params.condition);
   if (params?.min_age !== undefined) qs.set('min_age', String(params.min_age));
   if (params?.max_age !== undefined) qs.set('max_age', String(params.max_age));
+  if (params?.location) qs.set('location', params.location);
+  if (params?.phase) qs.set('phase', params.phase);
   if (params?.limit !== undefined) qs.set('limit', String(params.limit));
   const query = qs.toString() ? `?${qs.toString()}` : '';
   return apiFetch(`/api/trials/search${query}`);
@@ -428,4 +454,105 @@ export async function bulkValidateMatching(params?: {
   if (params?.limit !== undefined) qs.set('limit', String(params.limit));
   const query = qs.toString() ? `?${qs.toString()}` : '';
   return apiFetch(`/api/test/bulk-validate${query}`, { method: 'POST' });
+}
+
+// ── Sync History & Recently Synced Trials ────────────────────────────────
+
+export interface SyncHistory {
+  _id: string;
+  timestamp: string;
+  condition_filter?: string;
+  phase_filter?: string;
+  trials_synced: number;
+  new_trials: number;
+  new_trial_ids?: string[];
+  synced_from: string;
+}
+
+export interface RecentlysyncedTrial extends Trial {
+  synced_ago_hours?: number;
+  sync_timestamp?: string;
+}
+
+export async function getSyncHistory(limit = 20): Promise<{
+  success: boolean;
+  data: SyncHistory[];
+}> {
+  return apiFetch(`/api/trials/sync-history?limit=${limit}`);
+}
+
+export async function getRecentlySyncedTrials(params?: {
+  hours?: number;
+  limit?: number;
+}): Promise<{
+  success: boolean;
+  data: RecentlysyncedTrial[];
+  count: number;
+  synced_in_last_hours: number;
+  message: string;
+}> {
+  const qs = new URLSearchParams();
+  if (params?.hours !== undefined) qs.set('hours', String(params.hours));
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch(`/api/trials/recently-synced${query}`);
+}
+
+export async function exportRecentlySyncedTrialsCSV(params?: {
+  hours?: number;
+  limit?: number;
+}): Promise<void> {
+  // Fetch recently synced trials
+  const response = await getRecentlySyncedTrials(params);
+  const trials = response.data || [];
+
+  if (trials.length === 0) {
+    alert('No recently synced trials to export');
+    return;
+  }
+
+  // Prepare CSV headers
+  const headers = [
+    'NCT ID',
+    'Title',
+    'Phase',
+    'Status',
+    'Conditions',
+    'Sponsor',
+    'Enrollment',
+    'Synced Hours Ago',
+    'Location',
+  ];
+
+  // Prepare CSV rows
+  const rows = trials.map((trial) => [
+    trial.nct_id || '',
+    trial.title || '',
+    trial.phase || '',
+    trial.status || '',
+    (trial.conditions || []).join('; '),
+    trial.sponsor || '',
+    trial.enrollment || '',
+    trial.synced_ago_hours || '',
+    trial.locations ? trial.locations.map((l: any) => `${l.city}, ${l.state}`).join('; ') : '',
+  ]);
+
+  // Create CSV content
+  const csvContent = [
+    headers.map((h) => `"${h}"`).join(','),
+    ...rows.map((row) => row.map((cell) => `"${cell}"`).join(',')),
+  ].join('\n');
+
+  // Create blob and download
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+
+  link.setAttribute('href', url);
+  link.setAttribute('download', `recently-synced-trials-${new Date().toISOString().split('T')[0]}.csv`);
+  link.style.visibility = 'hidden';
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }

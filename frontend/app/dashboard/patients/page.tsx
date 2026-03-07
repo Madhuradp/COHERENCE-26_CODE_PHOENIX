@@ -106,7 +106,7 @@ export default function PatientsPage() {
     setIsUploading(true);
     setUploadCancelled(false);
     setUploadProgress(0);
-    setUploadStatus(`Uploading 0/${rows.length} records...`);
+    setUploadStatus(`Preparing upload for ${rows.length} records...`);
 
     // Transform all rows to proper nested structure
     const transformedPatients = transformPatientBatch(headers, rows);
@@ -114,8 +114,11 @@ export default function PatientsPage() {
     let successCount = 0;
     let failureCount = 0;
 
-    // Upload each patient with progress tracking
-    for (let idx = 0; idx < transformedPatients.length; idx++) {
+    // PARALLEL UPLOAD: Process 10 patients at a time instead of sequential
+    const BATCH_SIZE = 10;
+    const totalBatches = Math.ceil(transformedPatients.length / BATCH_SIZE);
+
+    for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
       // Check if upload was cancelled
       if (abortController.signal.aborted) {
         setIsUploading(false);
@@ -124,36 +127,48 @@ export default function PatientsPage() {
         return;
       }
 
-      try {
-        await uploadPatient(transformedPatients[idx]);
-        successCount++;
-      } catch (err) {
-        // Skip abort-related errors
-        if (err instanceof Error && err.message.includes("abort")) {
-          setIsUploading(false);
-          setUploadStatus(`Upload cancelled. ${successCount} records uploaded, ${failureCount} failed.`);
-          cancelControllerRef.current = null;
-          return;
+      const startIdx = batchIdx * BATCH_SIZE;
+      const endIdx = Math.min(startIdx + BATCH_SIZE, transformedPatients.length);
+      const batch = transformedPatients.slice(startIdx, endIdx);
+
+      // Upload batch in parallel (Promise.allSettled to handle individual failures)
+      const promises = batch.map(patient =>
+        uploadPatient(patient)
+          .then(() => ({ success: true }))
+          .catch((err) => ({ success: false, error: err }))
+      );
+
+      const results = await Promise.allSettled(promises);
+
+      // Count successes and failures in this batch
+      results.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          if (result.value.success) {
+            successCount++;
+          } else {
+            failureCount++;
+          }
+        } else {
+          failureCount++;
         }
-        failureCount++;
-        console.error(`Failed to upload patient ${idx + 1}:`, err);
-      }
+      });
 
       // Update progress
-      const progress = Math.round(((idx + 1) / rows.length) * 100);
+      const completedRecords = endIdx;
+      const progress = Math.round((completedRecords / transformedPatients.length) * 100);
       setUploadProgress(progress);
       setUploadStatus(
-        `Uploading ${idx + 1}/${rows.length} records... (${progress}%)`
+        `⬆️ Uploading ${completedRecords}/${transformedPatients.length} records... (${progress}%) - Batch ${batchIdx + 1}/${totalBatches}`
       );
     }
 
     setIsUploading(false);
     setUploadStatus(
-      `Upload complete: ${successCount} succeeded, ${failureCount} failed`
+      `✅ Upload complete: ${successCount} succeeded, ${failureCount} failed`
     );
     cancelControllerRef.current = null;
 
-    // Refresh patient list
+    // Refresh patient list in background (non-blocking)
     setTimeout(() => {
       listPatients().then((res) => setPatients(res.data));
     }, 500);
@@ -332,88 +347,72 @@ export default function PatientsPage() {
         </Card>
       </motion.div>
 
-      {/* Upload Progress Modal */}
+      {/* Upload Progress Toast (Non-Blocking Floating Notification) */}
       {isUploading && (
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          initial={{ opacity: 0, y: 20, x: -20 }}
+          animate={{ opacity: 1, y: 0, x: 0 }}
+          exit={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.3 }}
+          className="fixed bottom-6 left-6 w-96 bg-white rounded-2xl shadow-2xl p-6 z-40 border border-surface-border"
         >
-          <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full mx-4"
-          >
-            <div className="text-center space-y-6">
-              {/* Icon Animation */}
+          <div className="space-y-4">
+            {/* Header with Icon */}
+            <div className="flex items-start gap-3">
               <motion.div
                 animate={{ rotate: 360 }}
                 transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                className="w-16 h-16 rounded-full bg-brand-purple-light flex items-center justify-center mx-auto"
+                className="w-10 h-10 rounded-full bg-brand-purple-light flex items-center justify-center flex-shrink-0"
               >
-                <CheckCircle2 size={28} className="text-brand-purple" />
+                <CheckCircle2 size={20} className="text-brand-purple" />
               </motion.div>
-
-              {/* Title */}
-              <div>
-                <h3 className="text-lg font-bold text-text-primary mb-2">
-                  Uploading Patient Data
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-bold text-text-primary">
+                  Uploading {uploadProgress}%
                 </h3>
-                <p className="text-sm text-text-muted">
-                  Processing medical records for clinical trial matching...
+                <p className="text-xs text-text-muted mt-0.5">
+                  Processing {uploadStatus?.split('/')[1] || 'records'}
                 </p>
               </div>
-
-              {/* Progress Bar */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-                    Progress
-                  </span>
-                  <span className="text-sm font-bold text-brand-purple">{uploadProgress}%</span>
-                </div>
-                <div className="w-full bg-surface-muted rounded-full h-3 overflow-hidden">
-                  <motion.div
-                    className="bg-gradient-to-r from-brand-purple to-brand-blue h-full rounded-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${uploadProgress}%` }}
-                    transition={{ duration: 0.5, ease: "easeOut" }}
-                  />
-                </div>
-              </div>
-
-              {/* Status Message */}
-              <div className="bg-surface-muted rounded-xl p-4">
-                <p className="text-sm text-text-primary font-medium">{uploadStatus}</p>
-              </div>
-
-              {/* Info Box */}
-              <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-                <p className="text-xs text-blue-700 text-center">
-                  ✓ Conditions, medications, and lab values are being extracted and stored
-                  for trial matching
-                </p>
-              </div>
-
-              {/* Cancel Button */}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  if (cancelControllerRef.current) {
-                    cancelControllerRef.current.abort();
-                  }
-                  setUploadCancelled(true);
-                  setIsUploading(false);
-                  setUploadStatus("Upload cancelled by user");
-                }}
-                className="w-full !text-red-500 hover:!bg-red-50"
-              >
-                Cancel Upload
-              </Button>
             </div>
-          </motion.div>
+
+            {/* Progress Bar */}
+            <div className="space-y-2">
+              <div className="w-full bg-surface-muted rounded-full h-2 overflow-hidden">
+                <motion.div
+                  className="bg-gradient-to-r from-brand-purple to-brand-blue h-full rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${uploadProgress}%` }}
+                  transition={{ duration: 0.3, ease: "easeOut" }}
+                />
+              </div>
+              <p className="text-xs text-text-muted text-center">{uploadStatus}</p>
+            </div>
+
+            {/* Info */}
+            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+              <p className="text-xs text-blue-700">
+                ✓ You can continue working • Processing in background
+              </p>
+            </div>
+
+            {/* Cancel Button */}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                if (cancelControllerRef.current) {
+                  cancelControllerRef.current.abort();
+                }
+                setUploadCancelled(true);
+                setIsUploading(false);
+                setUploadStatus("Upload cancelled by user");
+              }}
+              className="w-full !text-red-500 hover:!bg-red-50"
+            >
+              Cancel
+            </Button>
+          </div>
         </motion.div>
       )}
 

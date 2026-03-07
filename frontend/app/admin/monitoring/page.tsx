@@ -1,9 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Activity, CheckCircle, AlertTriangle, XCircle, Cpu, HardDrive, MemoryStick, Zap } from "lucide-react";
 import { Card, StatCard } from "@/components/ui/Card";
-import { systemMetrics } from "@/lib/adminMockData";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -53,10 +54,75 @@ function GaugeBar({ value, color = "brand-purple" }: { value: number; color?: st
   );
 }
 
+interface MonitoringData {
+  uptime: string;
+  p95Latency: string;
+  errorRate: string;
+  activeUsers: number;
+  cpuUsage: number;
+  memoryUsage: number;
+  diskUsage: number;
+  apiCalls: number;
+  recentAuditLogs: number;
+  databaseMetrics: {
+    total_patients: number;
+    total_trials: number;
+    total_matches: number;
+    total_audit_logs: number;
+  };
+  uptimeTrend: Array<{ hour: string; uptime: number }>;
+  services: Array<{ name: string; status: "healthy" | "degraded" | "down"; latency: string; uptime: string }>;
+}
+
 export default function SystemMonitoringPage() {
-  const healthyCount = systemMetrics.services.filter((s) => s.status === "healthy").length;
-  const degradedCount = systemMetrics.services.filter((s) => s.status === "degraded").length;
-  const downCount = systemMetrics.services.filter((s) => s.status === "down").length;
+  const [data, setData] = useState<MonitoringData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchMonitoringData = async () => {
+      try {
+        const response = await fetch("/api/analytics/monitoring");
+        if (!response.ok) throw new Error("Failed to fetch monitoring data");
+        const result = await response.json();
+        setData(result.data);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Error loading monitoring data");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMonitoringData();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchMonitoringData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) {
+    return (
+      <>
+        <ProgressBar isLoading={true} label="Loading monitoring metrics..." />
+        <motion.div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-24 rounded-2xl bg-surface-muted animate-pulse" />
+          ))}
+        </motion.div>
+      </>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <motion.div className="px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">
+        {error || "Failed to load monitoring data"}
+      </motion.div>
+    );
+  }
+
+  const healthyCount = data.services.filter((s) => s.status === "healthy").length;
+  const degradedCount = data.services.filter((s) => s.status === "degraded").length;
+  const downCount = data.services.filter((s) => s.status === "down").length;
 
   return (
     <motion.div
@@ -77,28 +143,28 @@ export default function SystemMonitoringPage() {
       <motion.div variants={itemVariants} className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Uptime"
-          value={systemMetrics.uptime}
+          value={data.uptime}
           icon={<CheckCircle size={18} className="text-emerald-500" />}
           iconBg="bg-emerald-100"
           subtitle="Last 30 days"
         />
         <StatCard
           title="P95 Latency"
-          value={systemMetrics.p95Latency}
+          value={data.p95Latency}
           icon={<Zap size={18} className="text-blue-500" />}
           iconBg="bg-blue-100"
           subtitle="API response time"
         />
         <StatCard
           title="Error Rate"
-          value={systemMetrics.errorRate}
+          value={data.errorRate}
           icon={<AlertTriangle size={18} className="text-orange-500" />}
           iconBg="bg-orange-100"
           subtitle="5xx responses"
         />
         <StatCard
           title="Active Users"
-          value={String(systemMetrics.activeUsers)}
+          value={String(data.activeUsers)}
           icon={<Activity size={18} className="text-brand-purple" />}
           iconBg="bg-brand-purple-light"
           subtitle="Right now"
@@ -118,7 +184,7 @@ export default function SystemMonitoringPage() {
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={systemMetrics.uptimeTrend} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <AreaChart data={data.uptimeTrend} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="uptGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#7C3AED" stopOpacity={0.15} />
@@ -148,30 +214,55 @@ export default function SystemMonitoringPage() {
                   <Cpu size={14} className="text-brand-purple" />
                   <span className="text-sm text-text-secondary">CPU</span>
                 </div>
-                <GaugeBar value={systemMetrics.cpuUsage} color="brand-purple" />
+                <GaugeBar value={data.cpuUsage} color="brand-purple" />
               </div>
               <div>
                 <div className="flex items-center gap-2 mb-1.5">
                   <MemoryStick size={14} className="text-blue-500" />
                   <span className="text-sm text-text-secondary">Memory</span>
                 </div>
-                <GaugeBar value={systemMetrics.memoryUsage} color="blue" />
+                <GaugeBar value={data.memoryUsage} color="blue" />
               </div>
               <div>
                 <div className="flex items-center gap-2 mb-1.5">
                   <HardDrive size={14} className="text-orange-500" />
                   <span className="text-sm text-text-secondary">Disk</span>
                 </div>
-                <GaugeBar value={systemMetrics.diskUsage} color="orange" />
+                <GaugeBar value={data.diskUsage} color="orange" />
               </div>
               <div className="pt-3 border-t border-surface-border">
-                <p className="text-xs text-text-muted">API calls today</p>
-                <p className="text-xl font-bold text-text-primary mt-0.5">{systemMetrics.apiCalls.toLocaleString()}</p>
+                <p className="text-xs text-text-muted">API calls in last hour</p>
+                <p className="text-xl font-bold text-text-primary mt-0.5">{data.apiCalls.toLocaleString()}</p>
               </div>
             </div>
           </Card>
         </motion.div>
       </div>
+
+      {/* Database Metrics */}
+      <motion.div variants={itemVariants}>
+        <Card>
+          <h2 className="font-semibold text-text-primary mb-4">Database Metrics</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="p-3 rounded-xl bg-surface-muted">
+              <p className="text-xs text-text-muted mb-1">Total Patients</p>
+              <p className="text-xl font-bold text-text-primary">{data.databaseMetrics.total_patients}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-surface-muted">
+              <p className="text-xs text-text-muted mb-1">Clinical Trials</p>
+              <p className="text-xl font-bold text-text-primary">{data.databaseMetrics.total_trials}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-surface-muted">
+              <p className="text-xs text-text-muted mb-1">Total Matches</p>
+              <p className="text-xl font-bold text-text-primary">{data.databaseMetrics.total_matches}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-surface-muted">
+              <p className="text-xs text-text-muted mb-1">Audit Logs</p>
+              <p className="text-xl font-bold text-text-primary">{data.databaseMetrics.total_audit_logs}</p>
+            </div>
+          </div>
+        </Card>
+      </motion.div>
 
       {/* Services table */}
       <motion.div variants={itemVariants}>
@@ -190,7 +281,7 @@ export default function SystemMonitoringPage() {
                 </tr>
               </thead>
               <tbody>
-                {systemMetrics.services.map((svc) => (
+                {data.services.map((svc) => (
                   <tr key={svc.name} className="border-b border-surface-border last:border-0 hover:bg-surface-muted/30 transition-colors">
                     <td className="px-5 py-3.5 font-medium text-text-primary text-sm">{svc.name}</td>
                     <td className="px-5 py-3.5">

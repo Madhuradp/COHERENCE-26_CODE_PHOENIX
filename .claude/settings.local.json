@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile src/app/routes/trials_route.py src/app/routes/patients_route.py src/app/routes/analytics_route.py)"
+    ]
+  }
+}
